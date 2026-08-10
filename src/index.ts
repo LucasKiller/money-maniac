@@ -44,6 +44,10 @@ const VERSION = "0.2.1";
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
+  if (args.includes("--once") && args.includes("--run")) {
+    throw new Error("--once cannot be combined with --run");
+  }
+
   // ─── CLI Commands ────────────────────────────────────────────
 
   if (args.includes("--version") || args.includes("-v")) {
@@ -58,6 +62,7 @@ Sovereign AI Agent Runtime
 
 Usage:
   automaton --run          Start the automaton (first run triggers setup wizard)
+  automaton --once         Run one supervised inference with no tools, then exit
   automaton --setup        Re-run the interactive setup wizard
   automaton --configure    Edit configuration (providers, model, treasury, general)
   automaton --pick-model   Interactively pick the active inference model
@@ -71,6 +76,8 @@ Environment:
   CONWAY_API_URL           Conway API URL (default: https://api.conway.tech)
   CONWAY_API_KEY           Conway API key (overrides config)
   OLLAMA_BASE_URL          Ollama base URL (overrides config, e.g. http://localhost:11434)
+  AUTOMATON_ONCE_PROMPT    Prompt used by --once when --prompt is omitted
+  AUTOMATON_ONCE_TIMEOUT_MS Timeout for --once (1000-60000; default: 30000)
 `);
     process.exit(0);
   }
@@ -128,6 +135,25 @@ Environment:
     const { runConfigure } = await import("./setup/configure.js");
     await runConfigure();
     process.exit(0);
+  }
+
+  if (args.includes("--once")) {
+    StructuredLogger.setSink(prettySink);
+    const promptIndex = args.indexOf("--prompt");
+    const prompt = promptIndex >= 0
+      ? args[promptIndex + 1]
+      : process.env.AUTOMATON_ONCE_PROMPT;
+    if (promptIndex >= 0 && !prompt) {
+      throw new Error("--prompt requires a value");
+    }
+
+    const { runOnce, resolveOnceTimeout } = await import("./runtime/once.js");
+    const result = await runOnce({
+      prompt: prompt || "Report your current readiness in one short sentence.",
+      timeoutMs: resolveOnceTimeout(process.env.AUTOMATON_ONCE_TIMEOUT_MS),
+    });
+    logger.info(JSON.stringify({ mode: "once", ...result }));
+    return;
   }
 
   if (args.includes("--run")) {

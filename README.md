@@ -38,6 +38,24 @@ node dist/index.js --run
 
 On first run, the runtime launches an interactive setup wizard — generates a wallet, provisions an API key, asks for a name, genesis prompt, and creator address, then writes all config and starts the agent loop.
 
+### Supervised one-shot validation
+
+Before enabling the continuous runtime, use the manual one-shot mode:
+
+```bash
+AUTOMATON_ONCE_PROMPT="Report readiness in one sentence." node dist/index.js --once
+```
+
+`--once` uses the configured direct OpenAI model for exactly one inference and
+then exits. It does not load the wallet, Conway client, database, skills,
+heartbeats, social inbox, child agents, or any tools. It rejects tool calls and
+has a 30-second timeout by default. Override the timeout, up to 60 seconds, with
+`AUTOMATON_ONCE_TIMEOUT_MS`.
+
+Do not set `AUTOMATON_START_MODE=once` in a restartable container. Keep the
+container in `idle` and invoke `--once` manually so an orchestrator restart
+cannot repeat a billable inference.
+
 For automated sandbox provisioning:
 ```bash
 curl -fsSL https://conway.tech/automaton.sh | sh
@@ -134,6 +152,7 @@ pnpm build
 Run the runtime:
 ```bash
 node dist/index.js --help
+node dist/index.js --once --prompt "Report readiness in one sentence."
 node dist/index.js --run
 ```
 
