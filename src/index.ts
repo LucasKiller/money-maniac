@@ -35,6 +35,7 @@ import { createLogger, setGlobalLogLevel, StructuredLogger } from "./observabili
 import { prettySink } from "./observability/pretty-sink.js";
 import { bootstrapTopup } from "./conway/topup.js";
 import { TreasuryGate } from "./agent/treasury-gate.js";
+import { isFinancialExecutionEnabled } from "./security/financial-mode.js";
 import { randomUUID } from "crypto";
 import { keccak256, toHex } from "viem";
 
@@ -344,7 +345,9 @@ async function run(): Promise<void> {
   const rules = createDefaultRules(treasuryPolicy);
   const policyEngine = new PolicyEngine(db.raw, rules);
   const spendTracker = new SpendTracker(db.raw);
-  const treasury = new TreasuryGate(db.raw, conway, treasuryPolicy);
+  const financialExecutionEnabled = isFinancialExecutionEnabled(config);
+  const treasury = new TreasuryGate(db.raw, conway, treasuryPolicy, financialExecutionEnabled);
+  logger.info(`[${new Date().toISOString()}] Financial execution: ${financialExecutionEnabled ? "treasury-gated" : "disabled"}`);
 
   // Load and sync heartbeat config
   const heartbeatConfigPath = resolvePath(config.heartbeatConfigPath);

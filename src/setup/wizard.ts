@@ -140,6 +140,7 @@ export async function runSetupWizard(): Promise<AutomatonConfig> {
     maxX402PaymentCents: await promptWithDefault(
       "Max x402 payment (cents)", DEFAULT_TREASURY_POLICY.maxX402PaymentCents),
     x402AllowedDomains: DEFAULT_TREASURY_POLICY.x402AllowedDomains,
+    allowedTransferRecipients: DEFAULT_TREASURY_POLICY.allowedTransferRecipients,
     transferCooldownMs: DEFAULT_TREASURY_POLICY.transferCooldownMs,
     maxTransfersPerTurn: DEFAULT_TREASURY_POLICY.maxTransfersPerTurn,
     maxInferenceDailyCents: await promptWithDefault(

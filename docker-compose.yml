@@ -25,6 +25,8 @@ services:
       HOME: /home/automaton
       NODE_ENV: production
       AUTOMATON_START_MODE: ${AUTOMATON_START_MODE:-idle}
+      # Independent kill switch; financial execution remains disabled by default.
+      AUTOMATON_FINANCIAL_MODE: ${AUTOMATON_FINANCIAL_MODE:-disabled}
       CONWAY_API_URL: ${CONWAY_API_URL:-https://api.conway.tech}
       CONWAY_API_KEY: ${CONWAY_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

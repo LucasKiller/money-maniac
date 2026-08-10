@@ -40,10 +40,16 @@ export function loadConfig(): AutomatonConfig | null {
       ...DEFAULT_TREASURY_POLICY,
       ...(raw.treasuryPolicy ?? {}),
     };
+    treasuryPolicy.x402AllowedDomains = Array.isArray(treasuryPolicy.x402AllowedDomains)
+      ? treasuryPolicy.x402AllowedDomains.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [...DEFAULT_TREASURY_POLICY.x402AllowedDomains];
+    treasuryPolicy.allowedTransferRecipients = Array.isArray(treasuryPolicy.allowedTransferRecipients)
+      ? treasuryPolicy.allowedTransferRecipients.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [...DEFAULT_TREASURY_POLICY.allowedTransferRecipients];
 
     // Validate all treasury values are positive numbers
     for (const [key, value] of Object.entries(treasuryPolicy)) {
-      if (key === "x402AllowedDomains") continue; // array, not number
+      if (key === "x402AllowedDomains" || key === "allowedTransferRecipients") continue; // arrays, not numbers
       if (typeof value === "number" && (value < 0 || !Number.isFinite(value))) {
         logger.warn(`Invalid treasury value for ${key}: ${value}, using default`);
         (treasuryPolicy as any)[key] = (DEFAULT_TREASURY_POLICY as any)[key];

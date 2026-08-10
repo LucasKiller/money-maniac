@@ -552,7 +552,10 @@ describe("transfer_credits self-preservation", () => {
       db,
       conway,
       inference: new MockInferenceClient(),
-      treasury: new TreasuryGate(db.raw, conway, DEFAULT_TREASURY_POLICY),
+      treasury: new TreasuryGate(db.raw, conway, {
+        ...DEFAULT_TREASURY_POLICY,
+        allowedTransferRecipients: ["0xrecipient"],
+      }, true),
     };
   });
 
@@ -570,10 +573,10 @@ describe("transfer_credits self-preservation", () => {
     expect(result).toContain("maximum single-transfer limit");
   });
 
-  it("allows transfer of less than half balance", async () => {
+  it("allows an allowlisted transfer below the confirmation threshold", async () => {
     const transferTool = tools.find((t) => t.name === "transfer_credits")!;
     const result = await transferTool.execute(
-      { to_address: "0xrecipient", amount_cents: 4000 },
+      { to_address: "0xrecipient", amount_cents: 500 },
       ctx,
     );
     expect(result).toContain("transfer submitted");

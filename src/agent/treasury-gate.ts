@@ -45,6 +45,7 @@ export class TreasuryGate implements TreasuryGateInterface {
     private readonly db: Database.Database,
     private readonly conway: ConwayClient,
     private readonly policy: TreasuryPolicy,
+    private readonly executionEnabled = false,
   ) {}
 
   private withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -57,10 +58,12 @@ export class TreasuryGate implements TreasuryGateInterface {
     request: TreasuryIntentRequest & { recipient: string; note?: string },
   ): Promise<TreasuryTransferResult> {
     return this.withLock(async () => {
+      this.assertExecutionEnabled();
       this.validateRequest(request);
       if (request.operation !== "credit_transfer" && request.operation !== "child_funding") {
         throw new TreasuryDeniedError("OPERATION_DENIED", "Credit transfer gate received a non-transfer operation");
       }
+      this.assertRecipientAllowed(request.operation, request.recipient);
 
       this.assertNoUnresolvedIntent();
       const balance = await this.getKnownCreditsBalance();
@@ -97,6 +100,7 @@ export class TreasuryGate implements TreasuryGateInterface {
 
   reservePayment(request: TreasuryIntentRequest): Promise<TreasuryAuthorization> {
     return this.withLock(async () => {
+      this.assertExecutionEnabled();
       this.validateRequest(request);
       if (request.operation !== "x402" && request.operation !== "credit_topup") {
         throw new TreasuryDeniedError("OPERATION_DENIED", "Payment reservation requires an x402 operation");
@@ -177,6 +181,39 @@ export class TreasuryGate implements TreasuryGateInterface {
     }
   }
 
+  private assertExecutionEnabled(): void {
+    if (!this.executionEnabled) {
+      throw new TreasuryDeniedError(
+        "FINANCIAL_EXECUTION_DISABLED",
+        "Financial execution is disabled; enable both persisted configuration and treasury-gated runtime mode",
+      );
+    }
+  }
+
+  private assertRecipientAllowed(operation: TreasuryIntentRequest["operation"], recipient: string): void {
+    const normalizedRecipient = recipient.trim().toLowerCase();
+    if (!normalizedRecipient) {
+      throw new TreasuryDeniedError("RECIPIENT_REQUIRED", "Transfer recipient is required");
+    }
+
+    if (operation === "child_funding") {
+      const child = this.db.prepare(
+        "SELECT 1 FROM children WHERE lower(address) = ? LIMIT 1",
+      ).get(normalizedRecipient);
+      if (!child) {
+        throw new TreasuryDeniedError("RECIPIENT_DENIED", "Child funding recipient is not a registered child");
+      }
+      return;
+    }
+
+    const allowed = this.policy.allowedTransferRecipients.some(
+      (entry) => entry.trim().toLowerCase() === normalizedRecipient,
+    );
+    if (!allowed) {
+      throw new TreasuryDeniedError("RECIPIENT_DENIED", "Transfer recipient is not allowlisted");
+    }
+  }
+
   private async getKnownCreditsBalance(): Promise<number> {
     let balance: number;
     try {
@@ -196,6 +233,12 @@ export class TreasuryGate implements TreasuryGateInterface {
   private assertTransferLimits(amountCents: number, balanceCents: number): void {
     if (amountCents > this.policy.maxSingleTransferCents) {
       throw new TreasuryDeniedError("SINGLE_TRANSFER_LIMIT", "Transfer exceeds maximum single-transfer limit");
+    }
+    if (amountCents > this.policy.requireConfirmationAboveCents) {
+      throw new TreasuryDeniedError(
+        "CONFIRMATION_REQUIRED",
+        "Transfer exceeds the human-confirmation threshold; no unattended approval path is available",
+      );
     }
     if (balanceCents - amountCents < this.policy.minimumReserveCents) {
       throw new TreasuryDeniedError("MINIMUM_RESERVE", "Transfer would violate the minimum credit reserve");

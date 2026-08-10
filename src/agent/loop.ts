@@ -70,6 +70,7 @@ import { ProviderRegistry } from "../inference/provider-registry.js";
 import { UnifiedInferenceClient } from "../inference/inference-client.js";
 import { isIdleOnlyTool } from "./idle-only-tools.js";
 import { TreasuryGate } from "./treasury-gate.js";
+import { isFinancialExecutionEnabled } from "../security/financial-mode.js";
 
 const logger = createLogger("loop");
 const MAX_TOOL_CALLS_PER_TURN = 10;
@@ -114,6 +115,7 @@ export async function runAgentLoop(
       db.raw,
       conway,
       { ...DEFAULT_TREASURY_POLICY, ...(config.treasuryPolicy ?? {}) },
+      isFinancialExecutionEnabled(config),
     );
   const toolContext: ToolContext = {
     identity,
@@ -188,7 +190,7 @@ export async function runAgentLoop(
 
       const unifiedInference = new UnifiedInferenceClient(registry);
       const agentTracker = new SimpleAgentTracker(db);
-      const funding = new SimpleFundingProtocol(conway, identity, db);
+      const funding = new SimpleFundingProtocol(treasury, db);
       const messaging = new ColonyMessaging(
         new LocalDBTransport(db),
         db,

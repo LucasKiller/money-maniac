@@ -15,9 +15,59 @@ describe("TreasuryGate financial invariants", () => {
     const db = createTestDb();
     databases.push(db);
     const conway = new MockConwayClient();
-    const policy = { ...DEFAULT_TREASURY_POLICY, ...overrides };
-    return { db, conway, gate: new TreasuryGate(db.raw, conway, policy) };
+    const policy = {
+      ...DEFAULT_TREASURY_POLICY,
+      allowedTransferRecipients: ["0xrecipient", "0xother", "0xa", "0xb"],
+      requireConfirmationAboveCents: 5_000,
+      ...overrides,
+    };
+    return { db, conway, gate: new TreasuryGate(db.raw, conway, policy, true) };
   }
+
+  it("denies every financial operation when execution is disabled", async () => {
+    const db = createTestDb();
+    databases.push(db);
+    const gate = new TreasuryGate(db.raw, new MockConwayClient(), DEFAULT_TREASURY_POLICY);
+
+    await expect(gate.reservePayment({
+      operation: "x402",
+      amountCents: 1,
+      domain: "api.conway.tech",
+    })).rejects.toMatchObject({ code: "FINANCIAL_EXECUTION_DISABLED" });
+    expect((db.raw.prepare("SELECT COUNT(*) AS count FROM treasury_intents").get() as { count: number }).count).toBe(0);
+  });
+
+  it("denies arbitrary recipients and transfers above the confirmation threshold", async () => {
+    const { gate } = setup({ requireConfirmationAboveCents: 100 });
+    await expect(gate.executeCreditTransfer({
+      operation: "credit_transfer",
+      recipient: "0xattacker",
+      amountCents: 1,
+    })).rejects.toMatchObject({ code: "RECIPIENT_DENIED" });
+    await expect(gate.executeCreditTransfer({
+      operation: "credit_transfer",
+      recipient: "0xrecipient",
+      amountCents: 101,
+    })).rejects.toMatchObject({ code: "CONFIRMATION_REQUIRED" });
+  });
+
+  it("allows child funding only for a registered child", async () => {
+    const { db, gate } = setup();
+    await expect(gate.executeCreditTransfer({
+      operation: "child_funding",
+      recipient: "0xchild",
+      amountCents: 50,
+    })).rejects.toMatchObject({ code: "RECIPIENT_DENIED" });
+
+    db.raw.prepare(
+      "INSERT INTO children (id, name, address, sandbox_id, genesis_prompt, funded_amount_cents, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("child-1", "child", "0xchild", "sandbox", "test", 0, "running", new Date().toISOString());
+    await expect(gate.executeCreditTransfer({
+      operation: "child_funding",
+      recipient: "0xchild",
+      amountCents: 50,
+    })).resolves.toMatchObject({ transfer: expect.any(Object) });
+  });
 
   it("fails closed when the balance API is unavailable", async () => {
     const { db, conway, gate } = setup();

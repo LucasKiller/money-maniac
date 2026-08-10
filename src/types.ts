@@ -69,6 +69,8 @@ export interface AutomatonConfig {
   allowUnsafeHostExecution?: boolean;
   /** Autonomous wallet-funded topups are disabled until reconciliation is configured. */
   enableAutonomousTopup?: boolean;
+  /** Financial execution requires this flag plus AUTOMATON_FINANCIAL_MODE=treasury-gated. */
+  enableFinancialOperations?: boolean;
   /** Child sandbox memory config (MB), default 1024 */
   childSandboxMemoryMb?: number;
   parentAddress?: string;
@@ -97,6 +99,7 @@ export const DEFAULT_CONFIG: Partial<AutomatonConfig> = {
   allowUnsafeLocalWorkers: false,
   allowUnsafeHostExecution: false,
   enableAutonomousTopup: false,
+  enableFinancialOperations: false,
   childSandboxMemoryMb: 1024,
   socialRelayUrl: "https://social.conway.tech",
 };
@@ -646,6 +649,7 @@ export interface TreasuryPolicy {
   minimumReserveCents: number;
   maxX402PaymentCents: number;
   x402AllowedDomains: string[];
+  allowedTransferRecipients: string[];
   transferCooldownMs: number;
   maxTransfersPerTurn: number;
   maxInferenceDailyCents: number;
@@ -659,6 +663,7 @@ export const DEFAULT_TREASURY_POLICY: TreasuryPolicy = {
   minimumReserveCents: 1000,
   maxX402PaymentCents: 100,
   x402AllowedDomains: ['conway.tech'],
+  allowedTransferRecipients: [],
   transferCooldownMs: 0,
   maxTransfersPerTurn: 2,
   maxInferenceDailyCents: 50000,

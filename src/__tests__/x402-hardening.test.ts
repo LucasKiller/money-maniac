@@ -35,7 +35,7 @@ describe("x402 Treasury boundary", () => {
   function gate() {
     const db = createTestDb();
     databases.push(db);
-    return { db, gate: new TreasuryGate(db.raw, new MockConwayClient(), DEFAULT_TREASURY_POLICY) };
+    return { db, gate: new TreasuryGate(db.raw, new MockConwayClient(), DEFAULT_TREASURY_POLICY, true) };
   }
 
   it("refuses to sign when no TreasuryGate is present", async () => {

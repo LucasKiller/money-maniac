@@ -263,6 +263,14 @@ Fund via https://app.conway.tech
 cannot trigger payment. A submitted-but-uncertain payment blocks new financial intents
 until evidence-based reconciliation.
 
+Financial execution is independently disabled unless both
+`enableFinancialOperations: true` is persisted in configuration and
+`AUTOMATON_FINANCIAL_MODE=treasury-gated` is present at process startup. Direct credit
+transfers additionally require an exact match in `allowedTransferRecipients`. Amounts
+above `requireConfirmationAboveCents` fail closed because unattended human approval is
+not implemented. This does not make the in-process private key a production-grade signer;
+use only a disposable, loss-limited test wallet until signer isolation is implemented.
+
 - **On startup:** no payment occurs unless `enableAutonomousTopup` is explicitly enabled and TreasuryGate authorizes it.
 - **At runtime:** The agent decides when and how much to top up using the `topup_credits` tool. Valid tiers: $5, $25, $100, $500, $1,000, $2,500.
 - **Heartbeat:** Every 5 minutes, the heartbeat checks USDC balance. If USDC > $5 and credits < $5, it wakes the agent to perform a topup.

@@ -26,8 +26,11 @@ Update: development of Automaton has continued across Conway's internal RL envir
 
 > Security status: autonomous execution remains opt-in. Host shell, local workers, and
 > autonomous topups are disabled by default. Financial transfers and x402 payments pass
-> through a durable TreasuryGate. The private signer is still in-process, so run only in
-> an isolated, disposable environment with tightly limited funds.
+> through a durable TreasuryGate and financial execution requires two independent opt-ins.
+> Direct transfer recipients must be allowlisted and unattended transfers above the human
+> confirmation threshold are denied. The private signer is still in-process, so do not fund
+> this runtime beyond an explicitly accepted test-loss limit; production funds require an
+> isolated signer owned by a separate OS identity or service.
 
 ```bash
 git clone https://github.com/Conway-Research/automaton.git
