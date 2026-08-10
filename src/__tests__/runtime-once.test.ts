@@ -43,7 +43,7 @@ describe("supervised one-shot runtime", () => {
     expect(inference.chat).toHaveBeenCalledTimes(1);
     const [, options] = vi.mocked(inference.chat).mock.calls[0];
     expect(options?.tools).toBeUndefined();
-    expect(options?.maxTokens).toBe(256);
+    expect(options?.maxTokens).toBe(1_024);
     expect(result.content).toBe("Ready.");
     expect(result.tokenUsage.totalTokens).toBe(12);
   });
@@ -62,6 +62,20 @@ describe("supervised one-shot runtime", () => {
       { prompt: "Do something.", timeoutMs: 1_000 },
       { config, openaiApiKey: "test-key", inference },
     )).rejects.toThrow("tool call");
+  });
+
+  it("reports usage when the model exhausts output without text", async () => {
+    const inference = inferenceReturning(response({
+      message: { role: "assistant", content: "" },
+      usage: { promptTokens: 90, completionTokens: 256, totalTokens: 346 },
+      finishReason: "length",
+    }));
+    const config = createTestConfig({ inferenceModel: "gpt-5-mini" });
+
+    await expect(executeOnce(
+      { prompt: "Analyze risks.", timeoutMs: 1_000 },
+      { config, openaiApiKey: "test-key", inference },
+    )).rejects.toThrow("completionTokens=256, finishReason=length");
   });
 
   it("fails when the supervised timeout expires", async () => {
