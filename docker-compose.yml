@@ -1,0 +1,63 @@
+services:
+  automaton:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_VERSION: "22.12.0"
+        PNPM_VERSION: "10.28.1"
+    image: money-maniac-automaton:local
+    restart: unless-stopped
+
+    # The default is intentionally inert. Change AUTOMATON_START_MODE to "run"
+    # only after completing setup and reviewing ~/.automaton/automaton.json.
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        if [ "$${AUTOMATON_START_MODE:-idle}" = "run" ]; then
+          exec node dist/index.js --run
+        fi
+        echo "Automaton is in safe-idle mode; no wallet, provisioning, payment, or agent loop was started."
+        exec sleep infinity
+
+    environment:
+      HOME: /home/automaton
+      NODE_ENV: production
+      AUTOMATON_START_MODE: ${AUTOMATON_START_MODE:-idle}
+      CONWAY_API_URL: ${CONWAY_API_URL:-https://api.conway.tech}
+      CONWAY_API_KEY: ${CONWAY_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+
+    volumes:
+      - automaton_state:/home/automaton/.automaton
+
+    # No ports, host directories, devices, or Docker socket are exposed.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.0
+    stop_grace_period: 30s
+
+    healthcheck:
+      test: ["CMD", "node", "dist/index.js", "--status"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  automaton_state:
+    name: money-maniac-automaton-state
