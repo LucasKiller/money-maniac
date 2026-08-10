@@ -44,7 +44,7 @@ describe("supervised one-shot runtime", () => {
     const [, options] = vi.mocked(inference.chat).mock.calls[0];
     expect(options?.tools).toBeUndefined();
     expect(options?.maxTokens).toBe(1_024);
-    expect(options?.reasoningEffort).toBe("low");
+    expect(options?.reasoningEffort).toBe("minimal");
     expect(result.content).toBe("Ready.");
     expect(result.tokenUsage.totalTokens).toBe(12);
   });

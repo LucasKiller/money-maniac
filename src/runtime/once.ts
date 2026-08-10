@@ -114,7 +114,7 @@ export async function executeOnce(
           dependencies.config.maxTokensPerTurn,
           MAX_ONCE_OUTPUT_TOKENS,
         ),
-        reasoningEffort: "low",
+        reasoningEffort: "minimal",
         // Deliberately omit tools. One-shot mode has no execution capability.
       },
     ),
