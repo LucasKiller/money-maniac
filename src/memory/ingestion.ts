@@ -721,7 +721,7 @@ export class MemoryIngestionPipeline {
       }
 
       // Track inbox message sources (once per turn, not per tool call)
-      if (turn.inputSource === "agent" && turn.input) {
+      if (["agent", "trusted_child", "trusted_peer", "untrusted_peer", "external"].includes(turn.inputSource ?? "") && turn.input) {
         const fromMatch = turn.input.match(/\[Message from (0x[a-fA-F0-9]+)\]/);
         if (fromMatch) {
           const fromAddress = fromMatch[1];

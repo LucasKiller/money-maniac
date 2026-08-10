@@ -20,6 +20,7 @@ import type {
   AutomatonDatabase,
 } from "../types.js";
 import { logModification } from "./audit-log.js";
+import { resolveHomePath } from "../utils/paths.js";
 
 // ─── IMMUTABLE SAFETY INVARIANTS ─────────────────────────────
 // These are hard-coded and CANNOT be changed by the agent.
@@ -141,7 +142,7 @@ function resolveAndValidatePath(filePath: string): string | null {
     // Step 1: Resolve ~ to home
     let resolved = filePath;
     if (resolved.startsWith("~")) {
-      resolved = path.join(process.env.HOME || "/root", resolved.slice(1));
+      resolved = resolveHomePath(resolved);
     }
 
     // Step 2: Resolve to absolute path (handles .. and relative paths)
@@ -173,6 +174,7 @@ function resolveAndValidatePath(filePath: string): string | null {
  */
 export function isProtectedFile(filePath: string): boolean {
   const resolved = path.resolve(filePath);
+  const portablePath = `${filePath.replace(/\\/g, "/")}|${resolved.replace(/\\/g, "/")}`;
   const repoRoot = path.resolve(process.cwd());
 
   for (const directory of PROTECTED_REPOSITORY_DIRECTORIES) {
@@ -193,6 +195,13 @@ export function isProtectedFile(filePath: string): boolean {
 
   // Check against blocked directory patterns using path-segment matching
   for (const pattern of BLOCKED_DIRECTORY_PATTERNS) {
+    const portablePattern = pattern.replace(/\\/g, "/");
+    if (
+      portablePath.includes(`/${portablePattern.replace(/^\//, "")}/`)
+      || portablePath.endsWith(`/${portablePattern.replace(/^\//, "")}`)
+    ) {
+      return true;
+    }
     // Check if any path segment matches the blocked directory
     if (resolved.includes(path.sep + pattern + path.sep) ||
         resolved.endsWith(path.sep + pattern) ||

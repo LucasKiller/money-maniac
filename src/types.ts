@@ -188,6 +188,8 @@ export interface ToolContext {
   social?: SocialClientInterface;
   /** Mandatory authorization boundary for every financial operation. */
   treasury?: TreasuryGateInterface;
+  /** Provenance of the input that caused the current tool request. */
+  inputSource?: InputSource;
 }
 
 export interface SocialClientInterface {

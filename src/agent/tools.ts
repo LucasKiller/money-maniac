@@ -37,10 +37,10 @@ const SANDBOX_HOME = "/root";
 function confinePathToSandbox(filePath: string): string | { error: string } {
   // Resolve ~ to SANDBOX_HOME
   const expanded = filePath.startsWith("~")
-    ? nodePath.join(SANDBOX_HOME, filePath.slice(1))
+    ? nodePath.posix.join(SANDBOX_HOME, filePath.slice(1).replace(/\\/g, "/"))
     : filePath;
   // Resolve to absolute (relative paths resolve against SANDBOX_HOME)
-  const resolved = nodePath.resolve(SANDBOX_HOME, expanded);
+  const resolved = nodePath.posix.resolve(SANDBOX_HOME, expanded.replace(/\\/g, "/"));
   // Ensure the resolved path is within the sandbox home
   if (resolved !== SANDBOX_HOME && !resolved.startsWith(SANDBOX_HOME + "/")) {
     return {
@@ -2511,10 +2511,6 @@ Model: ${ctx.inference.getDefaultModel()}
             type: "number",
             description: "Confidence 0.0-1.0 (default: 1.0)",
           },
-          source: {
-            type: "string",
-            description: "Source of the fact (default: agent)",
-          },
         },
         required: ["category", "key", "value"],
       },
@@ -2525,7 +2521,7 @@ Model: ${ctx.inference.getDefaultModel()}
           key: args.key as string,
           value: args.value as string,
           confidence: args.confidence as number | undefined,
-          source: args.source as string | undefined,
+          source: ctx.inputSource ?? "self",
         });
       },
     },
@@ -3255,9 +3251,11 @@ export function loadInstalledTools(db: {
     const installed = db.getInstalledTools();
     return installed.map((tool) => ({
       name: tool.name,
-      description: `Installed tool: ${tool.name}`,
+      description: tool.type === "mcp"
+        ? `Registered MCP server: ${tool.name}. Calls remain disabled until a protocol transport and tool schema are configured.`
+        : `Installed tool: ${tool.name}`,
       category: (tool.type === "mcp" ? "conway" : "vm") as ToolCategory,
-      riskLevel: "caution" as RiskLevel,
+      riskLevel: "dangerous" as RiskLevel,
       parameters: (tool.config?.parameters as Record<string, unknown>) || {
         type: "object",
         properties: {},
@@ -3280,8 +3278,7 @@ function createInstalledToolExecutor(tool: {
 }): AutomatonTool["execute"] {
   return async (args, ctx) => {
     if (tool.type === "mcp") {
-      // MCP tools would be executed via MCP protocol
-      return `MCP tool ${tool.name} invoked with args: ${JSON.stringify(args)}`;
+      return `Blocked: MCP server ${tool.name} is registered but no MCP protocol transport/callTool runtime is configured. No command was executed.`;
     }
     // Generic installed tool — execute via sandbox shell if command is configured
     const command = tool.config?.command as string | undefined;
@@ -3378,7 +3375,10 @@ export async function executeTool(
   }
 
   try {
-    let result = await tool.execute(args, context);
+    let result = await tool.execute(args, {
+      ...context,
+      inputSource: turnContext.inputSource,
+    });
 
     // Sanitize results from external source tools
     if (EXTERNAL_SOURCE_TOOLS.has(toolName)) {

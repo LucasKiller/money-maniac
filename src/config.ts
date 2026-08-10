@@ -6,6 +6,7 @@
 
 import fs from "fs";
 import path from "path";
+import { resolveHomePath } from "./utils/paths.js";
 import type { AutomatonConfig, TreasuryPolicy, ModelStrategyConfig, SoulConfig } from "./types.js";
 import { DEFAULT_CONFIG, DEFAULT_TREASURY_POLICY, DEFAULT_MODEL_STRATEGY_CONFIG, DEFAULT_SOUL_CONFIG } from "./types.js";
 import { getAutomatonDir } from "./identity/wallet.js";
@@ -105,10 +106,7 @@ export function saveConfig(config: AutomatonConfig): void {
  * Resolve ~ paths to absolute paths.
  */
 export function resolvePath(p: string): string {
-  if (p.startsWith("~")) {
-    return path.join(process.env.HOME || "/root", p.slice(1));
-  }
-  return p;
+  return resolveHomePath(p);
 }
 
 /**

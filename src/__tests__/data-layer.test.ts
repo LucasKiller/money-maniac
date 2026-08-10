@@ -321,7 +321,23 @@ describe("Installed Tools Loading", () => {
     const tools = loadInstalledTools(db);
     expect(tools.length).toBe(1);
     expect(tools[0].name).toBe("test_tool");
-    expect(tools[0].riskLevel).toBe("caution");
+    expect(tools[0].riskLevel).toBe("dangerous");
+  });
+
+  it("fails closed instead of pretending to execute a registered MCP server", async () => {
+    db.installTool({
+      id: "mcp-1",
+      name: "mcp:test",
+      type: "mcp",
+      config: { command: "test-server" },
+      installedAt: new Date().toISOString(),
+      enabled: true,
+    });
+
+    const [tool] = loadInstalledTools(db);
+    const result = await tool.execute({}, {} as any);
+    expect(result).toContain("no MCP protocol transport/callTool runtime");
+    expect(result).toContain("No command was executed");
   });
 
   it("does not load disabled tools", () => {

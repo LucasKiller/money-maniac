@@ -245,6 +245,34 @@ describe("write_file / edit_own_file protection parity", () => {
   });
 });
 
+describe("memory provenance", () => {
+  it("derives semantic-memory source from execution provenance, not model arguments", async () => {
+    const db = createTestDb();
+    const conway = new MockConwayClient();
+    const tool = createBuiltinTools("test-sandbox-id").find((entry) => entry.name === "remember_fact")!;
+    try {
+      await tool.execute({
+        category: "environment",
+        key: "peer-claim",
+        value: "unverified",
+        source: "system",
+      }, {
+        identity: createTestIdentity(),
+        config: createTestConfig(),
+        db,
+        conway,
+        inference: new MockInferenceClient(),
+        inputSource: "untrusted_peer",
+      });
+
+      expect(db.raw.prepare("SELECT source FROM semantic_memory WHERE key = ?").get("peer-claim"))
+        .toEqual({ source: "untrusted_peer" });
+    } finally {
+      db.close();
+    }
+  });
+});
+
 // ─── read_file Sensitive File Blocking ──────────────────────────
 
 describe("read_file sensitive file blocking", () => {
