@@ -24,6 +24,7 @@ let tokenCounter: ReturnType<typeof createTokenCounter> | null = null;
 
 /** Maximum size for individual tool results in characters */
 export const MAX_TOOL_RESULT_SIZE = 10_000;
+export const MAX_CONTEXT_FIELD_SIZE = 32_768;
 
 // Re-export for external use
 export type { TokenBudget };
@@ -73,8 +74,8 @@ function estimateTurnTokens(turn: AgentTurn): number {
     total += estimateTokens(turn.thinking);
   }
   for (const tc of turn.toolCalls) {
-    total += estimateTokens(JSON.stringify(tc.arguments));
-    total += estimateTokens(tc.error ? `Error: ${tc.error}` : tc.result);
+    total += estimateTokens(truncateToolResult(JSON.stringify(tc.arguments), MAX_CONTEXT_FIELD_SIZE));
+    total += estimateTokens(truncateToolResult(tc.error ? `Error: ${tc.error}` : tc.result));
   }
   return total;
 }

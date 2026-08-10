@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ContextManager,
   createTokenCounter,
+  MAX_TOKENIZER_INPUT_CHARS,
   type StreamEvent,
   type TokenCounter,
 } from "../../memory/context-manager.js";
@@ -86,6 +87,17 @@ describe("createTokenCounter", () => {
 
     expect(counter.cache.has("default::evict-0")).toBe(false);
     expect(counter.cache.has("default::evict-10004")).toBe(true);
+  });
+
+  it("bounds tokenizer work and does not cache attacker-sized strings", () => {
+    const counter = createTokenCounter();
+    const payload = "a".repeat(MAX_TOKENIZER_INPUT_CHARS * 1_000);
+    const startedAt = performance.now();
+    const count = counter.countTokens(payload);
+
+    expect(count).toBeGreaterThan(0);
+    expect(counter.cache.size).toBe(0);
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
   });
 });
 

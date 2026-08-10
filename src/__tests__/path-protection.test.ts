@@ -77,6 +77,10 @@ describe("isProtectedFile", () => {
     expect(isProtectedFile("/some/path/self-mod/upstream.ts")).toBe(true);
     expect(isProtectedFile("/some/path/self-mod/upstream.js")).toBe(true);
     expect(isProtectedFile("/some/path/self-mod/tools-manager.ts")).toBe(true);
+    expect(isProtectedFile("src/agent/treasury-gate.ts")).toBe(true);
+    expect(isProtectedFile("src/agent/policy-rules/authority.ts")).toBe(true);
+    expect(isProtectedFile("src/state/database.ts")).toBe(true);
+    expect(isProtectedFile("src/security/injection-defense.ts")).toBe(true);
     expect(isProtectedFile("/some/path/self-mod/tools-manager.js")).toBe(true);
     expect(isProtectedFile("/some/path/skills/loader.ts")).toBe(true);
     expect(isProtectedFile("/some/path/skills/loader.js")).toBe(true);

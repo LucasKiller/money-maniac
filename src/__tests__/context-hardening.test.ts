@@ -67,6 +67,13 @@ describe("estimateTokens", () => {
   it("handles empty string as zero tokens", () => {
     expect(estimateTokens("")).toBe(0);
   });
+
+  it("does not synchronously tokenize an unbounded external payload", () => {
+    const payload = "x".repeat(16_384_000);
+    const startedAt = performance.now();
+    expect(estimateTokens(payload)).toBeGreaterThanOrEqual(Math.ceil(payload.length / 4));
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+  });
 });
 
 // ─── truncateToolResult ────────────────────────────────────────

@@ -8,6 +8,9 @@ import { getEncoding, type Tiktoken } from "js-tiktoken";
 import type { ChatMessage } from "../types.js";
 
 const MAX_TOKEN_CACHE_SIZE = 10_000;
+// Some BPE inputs (notably long unbroken strings) have pathological runtime.
+// Tokenize only a representative head/tail sample and extrapolate.
+export const MAX_TOKENIZER_INPUT_CHARS = 1_024;
 const DEFAULT_RESERVE_TOKENS = 4_096;
 const COMPRESSION_HEADROOM_RATIO = 0.1;
 const MAX_EVENT_CONTENT_CHARS = 220;
@@ -128,6 +131,12 @@ function formatCacheKey(text: string, model?: string): string {
   return `${model ?? "default"}::${text}`;
 }
 
+function boundedTokenizerSample(text: string): string {
+  if (text.length <= MAX_TOKENIZER_INPUT_CHARS) return text;
+  const half = Math.floor(MAX_TOKENIZER_INPUT_CHARS / 2);
+  return `${text.slice(0, half)}${text.slice(-half)}`;
+}
+
 export function createTokenCounter(): TokenCounter {
   const cache = new Map<string, number>();
   let encoder: Tiktoken | null = null;
@@ -140,19 +149,24 @@ export function createTokenCounter(): TokenCounter {
 
   const countTokens = (text: string, model?: string): number => {
     const normalizedText = text ?? "";
-    const key = formatCacheKey(normalizedText, model);
+    const shouldCache = normalizedText.length <= MAX_TOKENIZER_INPUT_CHARS;
+    const key = shouldCache ? formatCacheKey(normalizedText, model) : null;
 
-    const cached = cache.get(key);
+    const cached = key ? cache.get(key) : undefined;
     if (cached !== undefined) {
-      cache.delete(key);
-      cache.set(key, cached);
+      cache.delete(key!);
+      cache.set(key!, cached);
       return cached;
     }
 
     let count: number;
     if (encoder) {
       try {
-        count = encoder.encode(normalizedText).length;
+        const sample = boundedTokenizerSample(normalizedText);
+        const sampledTokens = encoder.encode(sample).length;
+        count = sample.length === normalizedText.length
+          ? sampledTokens
+          : Math.ceil(sampledTokens * (normalizedText.length / sample.length));
       } catch {
         count = Math.ceil(normalizedText.length / 3.5);
       }
@@ -160,8 +174,10 @@ export function createTokenCounter(): TokenCounter {
       count = Math.ceil(normalizedText.length / 3.5);
     }
 
-    cache.set(key, count);
-    enforceLruLimit(cache);
+    if (key) {
+      cache.set(key, count);
+      enforceLruLimit(cache);
+    }
     return count;
   };
 

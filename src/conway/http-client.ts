@@ -11,6 +11,31 @@ import type { HttpClientConfig } from "../types.js";
 import { DEFAULT_HTTP_CLIENT_CONFIG } from "../types.js";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata.aws.internal"]);
+
+function normalizedHostname(parsed: URL): string {
+  return parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+}
+
+function isPrivateNetworkHost(host: string): boolean {
+  if (host === "localhost" || host.endsWith(".localhost") || METADATA_HOSTS.has(host)) return true;
+  if (host.includes(":")) {
+    const normalized = host.toLowerCase();
+    return normalized === "::" || normalized === "::1" || normalized.startsWith("fc")
+      || normalized.startsWith("fd") || normalized.startsWith("fe8") || normalized.startsWith("fe9")
+      || normalized.startsWith("fea") || normalized.startsWith("feb")
+      || normalized.startsWith("::ffff:127.") || normalized.startsWith("::ffff:169.254.");
+  }
+  const octets = host.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = octets;
+  return a === 0 || a === 10 || a === 127 || a >= 224
+    || (a === 100 && b >= 64 && b <= 127)
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 198 && (b === 18 || b === 19));
+}
 
 function assertSecureUrl(
   url: string,
@@ -24,13 +49,15 @@ function assertSecureUrl(
   }
 
   const protocol = parsed.protocol.toLowerCase();
-  if (protocol === "https:") {
+  const host = normalizedHostname(parsed);
+  if (protocol === "http:" && allowHttpOnLoopback && LOOPBACK_HOSTS.has(host)) {
     return;
   }
 
-  const host = parsed.hostname.toLowerCase();
-  if (protocol === "http:" && allowHttpOnLoopback && LOOPBACK_HOSTS.has(host)) {
-    return;
+  if (protocol === "https:" && !isPrivateNetworkHost(host)) return;
+
+  if (protocol === "https:") {
+    throw new Error(`SSRF protection: refusing private or metadata host ${host}`);
   }
 
   throw new Error(
@@ -80,16 +107,17 @@ export class ResilientHttpClient {
       const timer = setTimeout(() => controller.abort(), timeout);
 
       try {
-        const response = await fetch(url, {
+        const response = await this.fetchFollowingSafeRedirects(url, {
           ...opts,
           signal: controller.signal,
+          redirect: "manual",
           headers: {
             ...opts.headers,
             ...(opts.idempotencyKey
               ? { "Idempotency-Key": opts.idempotencyKey }
               : {}),
           },
-        });
+        }, this.config.allowHttpOnLoopback);
         clearTimeout(timer);
 
         // Count retryable HTTP errors toward circuit breaker, regardless of
@@ -125,6 +153,28 @@ export class ResilientHttpClient {
     }
 
     throw new Error("Unreachable");
+  }
+
+  private async fetchFollowingSafeRedirects(
+    url: string,
+    init: RequestInit,
+    allowLoopbackHttp: boolean,
+  ): Promise<Response> {
+    let currentUrl = url;
+    for (let redirectCount = 0; redirectCount <= 5; redirectCount++) {
+      assertSecureUrl(currentUrl, allowLoopbackHttp);
+      const response = await fetch(currentUrl, init);
+      if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+      const location = response.headers.get("location");
+      if (!location) return response;
+      if (redirectCount === 5) throw new Error("Too many HTTP redirects");
+      const method = (init.method ?? "GET").toUpperCase();
+      if (method !== "GET" && method !== "HEAD") {
+        throw new Error("Refusing to redirect a mutating HTTP request");
+      }
+      currentUrl = new URL(location, currentUrl).toString();
+    }
+    throw new Error("Unreachable redirect state");
   }
 
   private async backoff(attempt: number): Promise<void> {

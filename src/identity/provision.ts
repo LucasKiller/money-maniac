@@ -19,6 +19,12 @@ const httpClient = new ResilientHttpClient();
 
 const DEFAULT_API_URL = "https://api.conway.tech";
 
+export interface ProvisionDependencies {
+  httpClient: Pick<ResilientHttpClient, "request">;
+  walletLoader: typeof getWallet;
+  persistConfig: typeof saveConfig;
+}
+
 /**
  * Load API key from ~/.automaton/config.json if it exists.
  */
@@ -64,18 +70,25 @@ function saveConfig(apiKey: string, walletAddress: string): void {
 export async function provision(
   apiUrl?: string,
   solanaIdentity?: ChainIdentity,
+  dependencies?: Partial<ProvisionDependencies>,
 ): Promise<ProvisionResult> {
   const url = apiUrl || process.env.CONWAY_API_URL || DEFAULT_API_URL;
+  const client = dependencies?.httpClient ?? httpClient;
+  const walletLoader = dependencies?.walletLoader ?? getWallet;
+  const persistConfig = dependencies?.persistConfig ?? saveConfig;
 
   // 1. Load wallet
-  const { account, chainIdentity, chainType } = await getWallet();
+  const { account, chainIdentity } = await walletLoader();
   const identity = solanaIdentity || chainIdentity;
   const address = identity.address;
   const isSolana = identity.chainType === "solana";
 
   // 2. Get nonce
-  const nonceResp = await httpClient.request(`${url}/v1/auth/nonce`, {
+  const nonceResp = await client.request(`${url}/v1/auth/nonce`, {
     method: "POST",
+    // Nonces are stateful. A transport retry may create a different nonce
+    // whose response the client never receives.
+    retries: 0,
   });
   if (!nonceResp.ok) {
     throw new Error(
@@ -123,10 +136,13 @@ export async function provision(
     verifyBody.chain_type = "solana";
   }
 
-  const verifyResp = await httpClient.request(`${url}/v1/auth/verify`, {
+  const verifyResp = await client.request(`${url}/v1/auth/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(verifyBody),
+    // SIWE/SIWS nonces are single-use. Replaying the same signed message after
+    // an ambiguous server response changes the original failure semantics.
+    retries: 0,
   });
 
   if (!verifyResp.ok) {
@@ -141,13 +157,16 @@ export async function provision(
   };
 
   // 5. Create API key
-  const keyResp = await httpClient.request(`${url}/v1/auth/api-keys`, {
+  const keyResp = await client.request(`${url}/v1/auth/api-keys`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${access_token}`,
     },
     body: JSON.stringify({ name: "conway-automaton" }),
+    // API-key creation is mutating and currently has no provider-supported
+    // idempotency key, so a blind retry could create duplicate credentials.
+    retries: 0,
   });
 
   if (!keyResp.ok) {
@@ -162,7 +181,7 @@ export async function provision(
   };
 
   // 6. Save to config
-  saveConfig(key, address);
+  persistConfig(key, address);
 
   return { apiKey: key, walletAddress: address, keyPrefix: key_prefix };
 }

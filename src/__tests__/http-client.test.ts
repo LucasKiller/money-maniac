@@ -94,6 +94,33 @@ describe("ResilientHttpClient", () => {
       ).rejects.toThrow("Invalid URL");
       expect(fetchSpy).not.toHaveBeenCalled();
     });
+
+    it.each([
+      "https://127.0.0.1/admin",
+      "https://169.254.169.254/latest/meta-data",
+      "https://10.0.0.1/internal",
+      "https://metadata.google.internal/computeMetadata/v1",
+      "https://[::1]/admin",
+    ])("rejects private and metadata targets: %s", async (url) => {
+      const client = new ResilientHttpClient({ maxRetries: 0 });
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy as any;
+
+      await expect(client.request(url)).rejects.toThrow("SSRF protection");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("validates every redirect target before following it", async () => {
+      const client = new ResilientHttpClient({ maxRetries: 0 });
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(new Response(null, {
+        status: 302,
+        headers: { location: "https://169.254.169.254/latest/meta-data" },
+      }));
+
+      await expect(client.request("https://api.example.com/start"))
+        .rejects.toThrow("SSRF protection");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("timeout behavior", () => {

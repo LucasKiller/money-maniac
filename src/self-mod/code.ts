@@ -76,6 +76,16 @@ const PROTECTED_FILES: readonly string[] = Object.freeze([
   "agent/policy-engine.js",
   "agent/policy-rules/index.ts",
   "agent/policy-rules/index.js",
+  "agent/treasury-gate.ts",
+  "agent/treasury-gate.js",
+  "conway/x402.ts",
+  "conway/x402.js",
+  "identity/wallet.ts",
+  "identity/wallet.js",
+  "identity/chain.ts",
+  "identity/chain.js",
+  "identity/provision.ts",
+  "identity/provision.js",
 ]);
 
 /**
@@ -96,6 +106,12 @@ const BLOCKED_DIRECTORY_PATTERNS: readonly string[] = Object.freeze([
   "/etc/shadow",
   "/proc",
   "/sys",
+]);
+
+const PROTECTED_REPOSITORY_DIRECTORIES: readonly string[] = Object.freeze([
+  "src/security",
+  "src/agent/policy-rules",
+  "src/state",
 ]);
 
 /**
@@ -157,6 +173,12 @@ function resolveAndValidatePath(filePath: string): string | null {
  */
 export function isProtectedFile(filePath: string): boolean {
   const resolved = path.resolve(filePath);
+  const repoRoot = path.resolve(process.cwd());
+
+  for (const directory of PROTECTED_REPOSITORY_DIRECTORIES) {
+    const protectedRoot = path.resolve(repoRoot, directory);
+    if (resolved === protectedRoot || resolved.startsWith(`${protectedRoot}${path.sep}`)) return true;
+  }
 
   // Check against protected file patterns using path-segment matching
   for (const pattern of PROTECTED_FILES) {
@@ -257,20 +279,26 @@ export async function editFile(
     };
   }
 
-  // 5. Read current content for diff
-  let oldContent = "";
+  // 5. Read current content for diff and guaranteed content rollback.
+  let oldContent: string;
   try {
     oldContent = await conway.readFile(filePath);
-  } catch {
-    oldContent = "(new file)";
+  } catch (error) {
+    return {
+      success: false,
+      error: `BLOCKED: self-modification currently requires an existing file so rollback is guaranteed: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 
-  // 6. Pre-modification git snapshot (in repo root, not ~/.automaton/)
+  // 6. Pre-modification git snapshot is mandatory.
   try {
     const { gitCommit } = await import("../git/tools.js");
     await gitCommit(conway, process.cwd(), `pre-modify: ${reason}`);
-  } catch {
-    // Git not available -- proceed without snapshot
+  } catch (error) {
+    return {
+      success: false,
+      error: `BLOCKED: could not create pre-modification snapshot: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 
   // 7. Write new content
@@ -283,7 +311,38 @@ export async function editFile(
     };
   }
 
-  // 8. Generate diff and log
+  // 8. Validate before promotion. A successful build alone is insufficient.
+  const validationCommands = [
+    { name: "typecheck", command: "pnpm typecheck", timeout: 120_000 },
+    { name: "unit tests", command: "pnpm test", timeout: 300_000 },
+    { name: "security tests", command: "pnpm test:security", timeout: 180_000 },
+    { name: "build", command: "pnpm build", timeout: 180_000 },
+  ];
+  for (const validation of validationCommands) {
+    let result;
+    try {
+      result = await conway.exec(validation.command, validation.timeout);
+    } catch (error) {
+      await conway.writeFile(filePath, oldContent);
+      logModification(db, "code_revert", `Rolled back failed self-modification: ${reason}`, {
+        filePath,
+        diff: `${validation.name} could not run: ${error instanceof Error ? error.message : String(error)}`,
+        reversible: true,
+      });
+      return { success: false, error: `Validation ${validation.name} could not run; modification rolled back.` };
+    }
+    if (result.exitCode !== 0) {
+      await conway.writeFile(filePath, oldContent);
+      logModification(db, "code_revert", `Rolled back failed self-modification: ${reason}`, {
+        filePath,
+        diff: `${validation.name} failed: ${(result.stderr || result.stdout).slice(0, MAX_DIFF_SIZE)}`,
+        reversible: true,
+      });
+      return { success: false, error: `Validation ${validation.name} failed; modification rolled back.` };
+    }
+  }
+
+  // 9. Generate diff and log only after validation.
   const diff = generateSimpleDiff(oldContent, newContent);
 
   logModification(db, "code_edit", reason, {
@@ -292,21 +351,18 @@ export async function editFile(
     reversible: true,
   });
 
-  // 9. Post-modification git commit (in repo root)
+  // 10. Promote the validated change with a durable commit.
   try {
     const { gitCommit } = await import("../git/tools.js");
     await gitCommit(conway, process.cwd(), `self-mod: ${reason}`);
-  } catch {
-    // Git not available -- proceed without commit
-  }
-
-  // 10. Rebuild if source file was edited
-  if (/\.(ts|js|tsx|jsx)$/.test(filePath)) {
-    try {
-      await conway.exec("npm run build", 60_000);
-    } catch {
-      return { success: true, error: "File edited but rebuild failed. Run 'npm run build' manually." };
-    }
+  } catch (error) {
+    await conway.writeFile(filePath, oldContent);
+    logModification(db, "code_revert", `Rolled back uncommitted self-modification: ${reason}`, {
+      filePath,
+      diff: error instanceof Error ? error.message : String(error),
+      reversible: true,
+    });
+    return { success: false, error: "Promotion commit failed; modification rolled back." };
   }
 
   return { success: true };
