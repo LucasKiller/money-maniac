@@ -12,7 +12,7 @@ const MAX_ONCE_PROMPT_CHARS = 4_000;
 // GPT-5 reasoning tokens share the completion-token budget. A very small cap
 // can produce a successful response with no user-visible text, so reserve
 // enough room for both bounded reasoning and a concise final answer.
-const MAX_ONCE_OUTPUT_TOKENS = 1_024;
+const MAX_ONCE_OUTPUT_TOKENS = 4_096;
 
 const ONCE_SYSTEM_PROMPT = `You are running in supervised one-shot validation mode.
 Answer the user's request, but do not request or claim to execute tools, shell commands,
