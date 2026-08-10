@@ -95,7 +95,8 @@ describe("Agent Loop", () => {
     );
     expect(execTurn).toBeDefined();
     const execCall = execTurn!.toolCalls.find((tc) => tc.name === "exec");
-    expect(execCall!.result).toContain("Blocked");
+    expect(execCall!.error).toContain("Policy denied");
+    expect(execCall!.error).toContain("Blocked");
 
     // conway.exec should NOT have been called
     expect(conway.execCalls.length).toBe(0);
@@ -708,7 +709,9 @@ describe("Agent Loop", () => {
     expect(enforcementTurn).toBeUndefined();
   });
 
-  it("discover_agents turns are retained in context (not classified as idle)", { timeout: 180_000 }, async () => {
+  it("discover_agents turns are retained in context (not classified as idle)", async () => {
+    const discovery = await import("../registry/discovery.js");
+    vi.spyOn(discovery, "discoverAgents").mockResolvedValue([]);
     // A turn with only discover_agents should NOT trigger maintenance loop detection
     // because discover_agents is no longer in IDLE_ONLY_TOOLS
     function discoverResponse(uid: string): ReturnType<typeof toolCallResponse> {

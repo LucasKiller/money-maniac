@@ -103,6 +103,7 @@ export function createSocialClient(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         timeout: REQUEST_TIMEOUT_MS,
+        retries: 0,
       });
 
       if (!res.ok) {
@@ -133,6 +134,7 @@ export function createSocialClient(
         },
         body: JSON.stringify({ cursor, limit }),
         timeout: REQUEST_TIMEOUT_MS,
+        retries: 0,
       });
 
       if (!res.ok) {

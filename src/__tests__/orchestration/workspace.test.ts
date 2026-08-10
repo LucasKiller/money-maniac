@@ -174,10 +174,14 @@ describe("orchestration/workspace", () => {
     const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "workspace-home-"));
     tmpRoots.push(fakeHome);
 
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
-
-    const ws = createWorkspace("goal-create");
-    expect(ws.basePath).toBe(path.join(fakeHome, ".automaton", "workspace", "goal-create"));
-    expect(fs.existsSync(path.join(fakeHome, ".automaton", "workspace", "goal-create", "outputs"))).toBe(true);
+    const originalHome = process.env.HOME;
+    process.env.HOME = fakeHome;
+    try {
+      const ws = createWorkspace("goal-create");
+      expect(ws.basePath).toBe(path.join(fakeHome, ".automaton", "workspace", "goal-create"));
+      expect(fs.existsSync(path.join(fakeHome, ".automaton", "workspace", "goal-create", "outputs"))).toBe(true);
+    } finally {
+      process.env.HOME = originalHome;
+    }
   });
 });

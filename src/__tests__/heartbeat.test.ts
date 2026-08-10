@@ -363,7 +363,7 @@ describe("Heartbeat Tasks", () => {
       expect(result.shouldWake).toBe(false);
     });
 
-    it("wakes when has USDC but critically low credits", async () => {
+    it("fails closed without TreasuryGate even when autonomous topup is enabled", async () => {
       const tickCtx = createMockTickContext(db, {
         creditBalance: 0, // critical tier
         usdcBalance: 10.0, // > 5
@@ -371,15 +371,14 @@ describe("Heartbeat Tasks", () => {
       });
       const taskCtx: HeartbeatLegacyContext = {
         identity: createTestIdentity(),
-        config: createTestConfig(),
+        config: { ...createTestConfig(), enableAutonomousTopup: true },
         db,
         conway,
       };
 
       const result = await BUILTIN_TASKS.check_usdc_balance(tickCtx, taskCtx);
 
-      expect(result.shouldWake).toBe(true);
-      expect(result.message).toContain("USDC");
+      expect(result.shouldWake).toBe(false);
     });
 
     it("does not wake when USDC below threshold", async () => {

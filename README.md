@@ -24,10 +24,15 @@ Update: development of Automaton has continued across Conway's internal RL envir
 
 ## Quick Start
 
+> Security status: autonomous execution remains opt-in. Host shell, local workers, and
+> autonomous topups are disabled by default. Financial transfers and x402 payments pass
+> through a durable TreasuryGate. The private signer is still in-process, so run only in
+> an isolated, disposable environment with tightly limited funds.
+
 ```bash
 git clone https://github.com/Conway-Research/automaton.git
 cd automaton
-npm install && npm run build
+corepack pnpm install --frozen-lockfile && corepack pnpm build
 node dist/index.js --run
 ```
 
@@ -76,6 +81,19 @@ To help save Automatons Tokens & simplify setup of permissionless services & cap
 The automaton can edit its own source code, install new tools, modify its heartbeat schedule, and create new skills — while running.
 
 Every modification is audit-logged and git-versioned in `~/.automaton/`. Protected files (the constitution, core laws) cannot be modified. Rate limits prevent runaway self-modification. The automaton's creator has full audit rights to every change.
+
+The current promotion pipeline requires a Git snapshot, typecheck, unit tests, security
+tests and build. Failed validation restores the prior file content. Treasury, policy,
+state and security code are protected from self-modification.
+
+## Current Security Boundaries
+
+- External provenance is retained through policy evaluation; sanitization is not authorization.
+- Auto-topup, host shell execution, and local in-process workers default to off.
+- Treasury intents are idempotent and block retries until uncertain payments are reconciled.
+- MCP servers can be registered, but MCP transport and `callTool` are not implemented; calls fail closed.
+- Local workers receive a public-only identity and cannot use the parent signer.
+- The main runtime still loads signing material in-process. An isolated signer remains required for production autonomy.
 
 ## Self-Replication
 

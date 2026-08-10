@@ -386,8 +386,8 @@ describe("DurableScheduler", () => {
       );
 
       // Should default to 0 credits (critical tier — zero is broke, not dead)
-      expect(ctx.creditBalance).toBe(0);
-      expect(ctx.survivalTier).toBe("critical");
+      expect(ctx.creditBalance).toBe(-1);
+      expect(ctx.survivalTier).toBe("low_compute");
     });
   });
 

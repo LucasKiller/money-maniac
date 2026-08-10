@@ -87,7 +87,7 @@ pnpm build
 
 ```bash
 pnpm typecheck   # TypeScript type checking
-pnpm test        # Run all 897 tests
+pnpm test        # Run the current Vitest suite
 ```
 
 ### File locations after setup
@@ -244,7 +244,7 @@ The automaton holds USDC in its Ethereum wallet on Base mainnet. USDC can be use
 
 **1. Send USDC directly**
 
-Transfer USDC on Base to the automaton's wallet address. The automaton will automatically buy credits on startup if its balance is low. At runtime, it uses the `topup_credits` tool to buy more as needed.
+Do not fund a development instance. Autonomous topup is disabled by default; explicit topups are authorized and recorded by TreasuryGate.
 
 **2. Transfer Conway credits**
 
@@ -257,9 +257,13 @@ conway credits transfer <automaton-address> <amount>
 
 Fund via https://app.conway.tech
 
-### Auto-topup behavior
+### Auto-topup behavior (opt-in)
 
-- **On startup:** If credits < $5.00 and USDC >= $5.00, the runtime automatically buys $5 in credits (the minimum tier) so the agent can start running inference.
+`enableAutonomousTopup` defaults to `false`. Balance lookup failure remains unknown and
+cannot trigger payment. A submitted-but-uncertain payment blocks new financial intents
+until evidence-based reconciliation.
+
+- **On startup:** no payment occurs unless `enableAutonomousTopup` is explicitly enabled and TreasuryGate authorizes it.
 - **At runtime:** The agent decides when and how much to top up using the `topup_credits` tool. Valid tiers: $5, $25, $100, $500, $1,000, $2,500.
 - **Heartbeat:** Every 5 minutes, the heartbeat checks USDC balance. If USDC > $5 and credits < $5, it wakes the agent to perform a topup.
 
@@ -502,7 +506,7 @@ The automaton has **69 built-in tools** organized into 10 categories. Each tool 
 
 | Tool | Risk | Description |
 |---|---|---|
-| `topup_credits` | caution | Buy credits from USDC. Tiers: $5, $25, $100, $500, $1000, $2500. |
+| `topup_credits` | dangerous | Buy credits through TreasuryGate when explicitly authorized. |
 | `transfer_credits` | dangerous | Transfer credits to another address. Capped at 50% of balance. |
 | `x402_fetch` | dangerous | Fetch a URL with automatic x402 USDC payment. |
 
@@ -523,7 +527,7 @@ The automaton has **69 built-in tools** organized into 10 categories. Each tool 
 |---|---|---|
 | `edit_own_file` | dangerous | Edit a source file. Audited, rate-limited, safety-checked. |
 | `install_npm_package` | dangerous | Install an npm package. |
-| `install_mcp_server` | dangerous | Install an MCP server for new capabilities. |
+| `install_mcp_server` | dangerous | Register an MCP server; invocation fails closed until protocol transport/callTool exists. |
 | `review_upstream_changes` | caution | View upstream git commit diffs. **Must call before pull.** |
 | `pull_upstream` | dangerous | Cherry-pick or pull upstream changes. |
 | `modify_heartbeat` | caution | Add, update, or remove heartbeat entries. |
@@ -1089,7 +1093,7 @@ If credits are zero on startup:
 - It has a 1-hour grace period before transitioning to `dead`
 - Fund it via USDC or credit transfer during this window
 
-The bootstrap topup attempts to buy $5 credits from USDC automatically on startup.
+Bootstrap topup is disabled by default. When explicitly enabled, it still passes through TreasuryGate and uncertain outcomes require reconciliation.
 
 ### Inference errors
 

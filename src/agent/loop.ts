@@ -27,7 +27,9 @@ import type {
   TreasuryGateInterface,
 } from "../types.js";
 import { DEFAULT_MODEL_STRATEGY_CONFIG, DEFAULT_TREASURY_POLICY } from "../types.js";
-import type { PolicyEngine } from "./policy-engine.js";
+import { PolicyEngine } from "./policy-engine.js";
+import { createDefaultRules } from "./policy-rules/index.js";
+import { SpendTracker } from "./spend-tracker.js";
 import { buildSystemPrompt, buildWakeupPrompt } from "./system-prompt.js";
 import { buildContextMessages, trimContext } from "./context.js";
 import {
@@ -103,6 +105,11 @@ export async function runAgentLoop(
   const builtinTools = createBuiltinTools(identity.sandboxId);
   const installedTools = loadInstalledTools(db);
   const tools = [...builtinTools, ...installedTools];
+  const effectiveSpendTracker = spendTracker ?? new SpendTracker(db.raw);
+  const effectivePolicyEngine = policyEngine ?? new PolicyEngine(
+    db.raw,
+    createDefaultRules({ ...DEFAULT_TREASURY_POLICY, ...(config.treasuryPolicy ?? {}) }),
+  );
   const treasury = options.treasury ?? new TreasuryGate(
       db.raw,
       conway,
@@ -205,8 +212,8 @@ export async function runAgentLoop(
         allowedEditRoot: process.cwd(),
         tools,
         toolContext,
-        policyEngine,
-        spendTracker,
+        policyEngine: effectivePolicyEngine,
+        spendTracker: effectiveSpendTracker,
       });
       workerPool = initializedWorkerPool;
 
@@ -663,7 +670,7 @@ export async function runAgentLoop(
       if (response.toolCalls && response.toolCalls.length > 0) {
         const toolCallMessages: any[] = [];
         let callCount = 0;
-        const currentInputSource = currentInput?.source as InputSource | undefined;
+        const currentInputSource = (currentInput?.source as InputSource | undefined) ?? "self";
 
         for (const tc of response.toolCalls) {
           if (callCount >= MAX_TOOL_CALLS_PER_TURN) {
@@ -686,12 +693,12 @@ export async function runAgentLoop(
             args,
             tools,
             toolContext,
-            policyEngine,
-            spendTracker ? {
+            effectivePolicyEngine,
+            {
               inputSource: currentInputSource,
               turnToolCallCount: turn.toolCalls.filter(t => t.name === "transfer_credits").length,
-              sessionSpend: spendTracker,
-            } : undefined,
+              sessionSpend: effectiveSpendTracker,
+            },
           );
 
           // Override the ID to match the inference call's ID

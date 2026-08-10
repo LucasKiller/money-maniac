@@ -90,7 +90,7 @@ The runtime alternates between two states: **running** (the agent loop is active
        |
   [Init database]         Schema migrations applied (v1 -> v8)
        |
-  [Bootstrap topup]       If credits < $5 and USDC available, buy $5 credits
+  [Bootstrap topup]       Disabled by default; opt-in and TreasuryGate-authorized
        |
   [Start heartbeat]       DurableScheduler begins ticking
        |
@@ -252,7 +252,7 @@ src/
     monitor.ts             Resource status + tier transitions
     low-compute.ts         Low-compute mode configuration
 
-  __tests__/               Test suite (24 test files, 897 tests)
+  __tests__/               Vitest test suite (count evolves with the code)
 ```
 
 ---
@@ -271,7 +271,7 @@ The automaton runs as a long-lived Node.js process. The `--run` command triggers
 6. **Social client** — connects to `social.conway.tech` relay (optional)
 7. **Policy engine** — assembles rule set from 6 rule categories
 8. **Spend tracker** — initializes hourly/daily spend windows
-9. **Bootstrap topup** — buys minimum $5 credits from USDC if balance is low
+9. **Bootstrap topup** — skipped by default; opt-in requests pass through TreasuryGate
 10. **Heartbeat daemon** — starts DurableScheduler with 6 default tasks
 11. **Main loop** — alternates between `runAgentLoop()` and sleeping
 
@@ -481,7 +481,7 @@ The automaton's survival depends on two balances:
 | `critical` | >= $0.00 | Zero credits, alive. Distress signals, accept funding. |
 | `dead` | < $0.00 | Only reachable via 1-hour heartbeat grace period at zero credits |
 
-**Credit topup** (`src/conway/topup.ts`): The agent buys credits from USDC via the x402 payment protocol. On startup, `bootstrapTopup()` buys the minimum $5 tier. At runtime, the agent uses `topup_credits` tool to choose larger tiers ($5/$25/$100/$500/$1000/$2500).
+**Credit topup** (`src/conway/topup.ts`): x402 topups require TreasuryGate reservation, exact settlement accounting and reconciliation after uncertain submission. Autonomous topup defaults off.
 
 **x402 protocol** (`src/conway/x402.ts`): HTTP 402 payment flow. Server returns payment requirements, client signs a USDC `TransferWithAuthorization` (EIP-3009), retries with `X-Payment` header.
 
@@ -740,7 +740,7 @@ The automaton operates under a defense-in-depth security model:
 
 ## Testing
 
-**Location:** `src/__tests__/` — 24 test files, 897 tests
+**Location:** `src/__tests__/` — the test count is intentionally not hard-coded here.
 
 | Area | Files | Tests |
 |---|---|---|
@@ -771,7 +771,7 @@ The automaton operates under a defense-in-depth security model:
 
 ```
 pnpm build       # tsc + workspace builds
-pnpm test        # vitest run (897 tests)
+pnpm test        # vitest run
 pnpm typecheck   # tsc --noEmit
 ```
 
