@@ -29,6 +29,10 @@ interface InferenceClientOptions {
   ollamaBaseUrl?: string;
   /** Optional registry lookup — if provided, used before name heuristics */
   getModelProvider?: (modelId: string) => string | undefined;
+  /** HTTP timeout override. Supervised execution uses this to abort in-flight work. */
+  requestTimeoutMs?: number;
+  /** Retry override. Set to zero when one logical inference must equal one request. */
+  maxRetries?: number;
 }
 
 type InferenceBackend = "conway" | "openai" | "anthropic" | "ollama";
@@ -50,7 +54,10 @@ export function createInferenceClient(
 ): InferenceClient {
   const { apiUrl, apiKey, openaiApiKey, anthropicApiKey, ollamaBaseUrl, getModelProvider } = options;
   const httpClient = new ResilientHttpClient({
-    baseTimeout: INFERENCE_TIMEOUT_MS,
+    baseTimeout: options.requestTimeoutMs ?? INFERENCE_TIMEOUT_MS,
+    ...(options.maxRetries !== undefined
+      ? { maxRetries: options.maxRetries }
+      : {}),
     retryableStatuses: [429, 500, 502, 503, 504],
     allowHttpOnLoopback: isLoopbackHttpUrl(ollamaBaseUrl),
   });
@@ -218,7 +225,6 @@ async function chatViaOpenAiCompatible(params: {
           : params.apiKey,
     },
     body: JSON.stringify(params.body),
-    timeout: INFERENCE_TIMEOUT_MS,
   });
 
   if (!resp.ok) {
@@ -310,7 +316,6 @@ async function chatViaAnthropic(params: {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify(body),
-    timeout: INFERENCE_TIMEOUT_MS,
   });
 
   if (!resp.ok) {

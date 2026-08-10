@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { executeOnce, resolveOnceTimeout } from "../runtime/once.js";
+import { createInferenceClient } from "../conway/inference.js";
 import { createTestConfig } from "./mocks.js";
 import type { InferenceClient, InferenceResponse } from "../types.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function response(overrides: Partial<InferenceResponse> = {}): InferenceResponse {
   return {
@@ -107,5 +112,55 @@ describe("supervised one-shot runtime", () => {
     expect(resolveOnceTimeout("1500")).toBe(1_500);
     expect(() => resolveOnceTimeout("999")).toThrow("between 1000 and 60000");
     expect(() => resolveOnceTimeout("not-a-number")).toThrow("between 1000 and 60000");
+  });
+
+  it("can enforce one HTTP attempt for supervised inference", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("temporary failure", { status: 500 }),
+    );
+    const client = createInferenceClient({
+      apiUrl: "https://api.conway.tech",
+      apiKey: "",
+      defaultModel: "gpt-5-mini",
+      maxTokens: 32,
+      openaiApiKey: "test-key",
+      maxRetries: 0,
+      requestTimeoutMs: 1_000,
+    });
+
+    await expect(client.chat([
+      { role: "user", content: "Report readiness." },
+    ])).rejects.toThrow("Inference error (openai): 500");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockRestore();
+  });
+
+  it("aborts the in-flight HTTP request at the supervised deadline", async () => {
+    let observedAbort = false;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (_input, init) => new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        signal?.addEventListener("abort", () => {
+          observedAbort = true;
+          reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      }),
+    );
+    const client = createInferenceClient({
+      apiUrl: "https://api.conway.tech",
+      apiKey: "",
+      defaultModel: "gpt-5-mini",
+      maxTokens: 32,
+      openaiApiKey: "test-key",
+      maxRetries: 0,
+      requestTimeoutMs: 25,
+    });
+
+    await expect(client.chat([
+      { role: "user", content: "Report readiness." },
+    ])).rejects.toThrow();
+    expect(observedAbort).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockRestore();
   });
 });

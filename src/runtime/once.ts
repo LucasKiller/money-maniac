@@ -146,6 +146,7 @@ export async function runOnce(options: OnceRunOptions): Promise<OnceRunResult> {
   }
 
   assertOpenAiModel(config.inferenceModel);
+  const timeoutMs = validateTimeout(options.timeoutMs);
 
   const inference = createInferenceClient({
     apiUrl: config.conwayApiUrl,
@@ -154,9 +155,14 @@ export async function runOnce(options: OnceRunOptions): Promise<OnceRunResult> {
     maxTokens: Math.min(config.maxTokensPerTurn, MAX_ONCE_OUTPUT_TOKENS),
     lowComputeModel: "gpt-5-mini",
     openaiApiKey,
+    requestTimeoutMs: timeoutMs,
+    maxRetries: 0,
   });
 
-  return executeOnce(options, { config, openaiApiKey, inference });
+  return executeOnce(
+    { ...options, timeoutMs },
+    { config, openaiApiKey, inference },
+  );
 }
 
 export function resolveOnceTimeout(raw: string | undefined): number {
