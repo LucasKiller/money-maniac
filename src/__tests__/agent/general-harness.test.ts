@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GeneralHarness } from "../../agent/harnesses/general-harness.js";
 import { PolicyEngine } from "../../agent/policy-engine.js";
+import { SpendTracker } from "../../agent/spend-tracker.js";
 import { createFinancialRules } from "../../agent/policy-rules/financial.js";
 import type { HarnessContext } from "../../agent/harness-types.js";
 import type { AutomatonTool } from "../../types.js";
@@ -56,6 +57,9 @@ describe("agent/GeneralHarness", () => {
       wisdom: { conventions: [], successes: [], failures: [], gotchas: [] },
       abortSignal: new AbortController().signal,
       goalId: "goal-1",
+      policyEngine: new PolicyEngine(appDb.raw, []),
+      spendTracker: new SpendTracker(appDb.raw),
+      inputSource: "self",
       toolCatalog,
       toolContext: {
         identity,

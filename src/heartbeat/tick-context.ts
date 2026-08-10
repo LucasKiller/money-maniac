@@ -48,7 +48,9 @@ export async function buildTickContext(
   const startedAt = new Date();
 
   // Fetch balances ONCE
-  let creditBalance = 0;
+  // -1 is an explicit unknown sentinel. API failure must never be interpreted
+  // as a real zero balance because zero can trigger survival payments.
+  let creditBalance = -1;
   try {
     creditBalance = await conway.getCreditsBalance();
   } catch (err: any) {
@@ -65,7 +67,7 @@ export async function buildTickContext(
     }
   }
 
-  const survivalTier = getSurvivalTier(creditBalance);
+  const survivalTier = creditBalance < 0 ? "low_compute" : getSurvivalTier(creditBalance);
   const lowComputeMultiplier = config.lowComputeMultiplier ?? 4;
 
   return {

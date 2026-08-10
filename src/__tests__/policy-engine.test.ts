@@ -509,12 +509,17 @@ describe("PolicyEngine", () => {
       expect(PolicyEngine.deriveAuthorityLevel("heartbeat")).toBe("external");
     });
 
-    it("returns agent for creator", () => {
-      expect(PolicyEngine.deriveAuthorityLevel("creator")).toBe("agent");
+    it("preserves creator authority", () => {
+      expect(PolicyEngine.deriveAuthorityLevel("creator")).toBe("creator");
     });
 
-    it("returns agent for agent", () => {
-      expect(PolicyEngine.deriveAuthorityLevel("agent")).toBe("agent");
+    it("maps legacy agent source to self authority", () => {
+      expect(PolicyEngine.deriveAuthorityLevel("agent")).toBe("self");
+    });
+
+    it("keeps untrusted peers external and trusted children delegated", () => {
+      expect(PolicyEngine.deriveAuthorityLevel("untrusted_peer")).toBe("external");
+      expect(PolicyEngine.deriveAuthorityLevel("trusted_child")).toBe("trusted");
     });
 
     it("returns system for system", () => {
@@ -674,7 +679,7 @@ describe("executeTool with PolicyEngine", () => {
     expect(result.result).toBe("");
   });
 
-  it("allows tool execution when no policy engine is provided", async () => {
+  it("fails closed when no policy engine is provided", async () => {
     const tools = createBuiltinTools("test-sandbox-id");
     const identity = createTestIdentity();
     const config = createTestConfig();
@@ -689,11 +694,11 @@ describe("executeTool with PolicyEngine", () => {
       inference,
     };
 
-    // No policyEngine or turnContext - backward compatible
+    // Missing security context must never become an implicit allow path.
     const result = await executeTool("check_credits", {}, tools, context);
 
-    expect(result.error).toBeUndefined();
-    expect(result.result).toContain("Credit balance");
+    expect(result.error).toContain("POLICY_CONTEXT_REQUIRED");
+    expect(result.result).toBe("");
   });
 
   it("allows tool execution when policy allows", async () => {

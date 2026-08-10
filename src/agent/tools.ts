@@ -278,7 +278,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       description:
         "Buy Conway compute credits by paying USDC from your wallet via x402. Valid tier amounts: $5, $25, $100, $500, $1000, $2500. Check your USDC balance first with check_usdc_balance.",
       category: "financial",
-      riskLevel: "caution",
+      riskLevel: "dangerous",
       parameters: {
         type: "object",
         properties: {
@@ -291,6 +291,9 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         required: ["amount_usd"],
       },
       execute: async (args, ctx) => {
+        if (!ctx.treasury) {
+          return "Blocked: TreasuryGate is required for credit topups.";
+        }
         // Solana guard: x402 topup is EVM-only
         const chainType = ctx.config.chainType || ctx.identity.chainType || "evm";
         if (chainType === "solana") {
@@ -316,6 +319,8 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           ctx.config.conwayApiUrl,
           ctx.identity.account,
           amountUsd,
+          undefined,
+          ctx.treasury,
         );
 
         if (!result.success) {
@@ -1014,18 +1019,25 @@ Model: ${ctx.inference.getDefaultModel()}
         if (!Number.isFinite(amount) || amount <= 0) {
           return `Blocked: amount_cents must be a positive number, got ${amount}.`;
         }
-
-        // Guard: don't transfer more than half your balance
-        const balance = await ctx.conway.getCreditsBalance();
-        if (amount > balance / 2) {
-          return `Blocked: Cannot transfer more than half your balance ($${(balance / 100).toFixed(2)}). Self-preservation.`;
+        if (!ctx.treasury) {
+          return "Blocked: TreasuryGate is required for credit transfers.";
         }
 
-        const transfer = await ctx.conway.transferCredits(
-          args.to_address as string,
-          amount,
-          args.reason as string | undefined,
-        );
+        let outcome;
+        try {
+          outcome = await ctx.treasury.executeCreditTransfer({
+            operation: "credit_transfer",
+            recipient: args.to_address as string,
+            amountCents: amount,
+            note: args.reason as string | undefined,
+          });
+        } catch (error) {
+          if (error instanceof Error && error.name === "TreasuryDeniedError") {
+            return `Blocked: TreasuryGate denied transfer: ${error.message}`;
+          }
+          throw error;
+        }
+        const { transfer, balanceBeforeCents: balance } = outcome;
 
         const { ulid } = await import("ulid");
         ctx.db.insertTransaction({
@@ -1653,7 +1665,7 @@ Model: ${ctx.inference.getDefaultModel()}
           // Auto-topup on 402 insufficient credits and retry once
           const is402 = err?.status === 402 ||
             err?.message?.includes("INSUFFICIENT_CREDITS");
-          if (is402) {
+          if (is402 && ctx.config.enableAutonomousTopup && ctx.treasury) {
             const COOLDOWN_MS = 60_000;
             const last = ctx.db.getKV("last_sandbox_topup_attempt");
             const cooldownOk = !last ||
@@ -1667,6 +1679,7 @@ Model: ${ctx.inference.getDefaultModel()}
                 account: ctx.identity.account,
                 error: err,
                 chainType: ctx.config.chainType || ctx.identity.chainType || "evm",
+                treasury: ctx.treasury,
               });
               if (topup?.success) {
                 const retryLifecycle = new ChildLifecycle(ctx.db.raw);
@@ -1726,6 +1739,9 @@ Model: ${ctx.inference.getDefaultModel()}
         required: ["child_id", "amount_cents"],
       },
       execute: async (args, ctx) => {
+        if (!ctx.treasury) {
+          return "Blocked: TreasuryGate is required for child funding.";
+        }
         const child = ctx.db.getChildById(args.child_id as string);
         if (!child) return `Child ${args.child_id} not found.`;
 
@@ -1754,16 +1770,21 @@ Model: ${ctx.inference.getDefaultModel()}
           return `Blocked: amount_cents must be a positive number, got ${amount}.`;
         }
 
-        const balance = await ctx.conway.getCreditsBalance();
-        if (amount > balance / 2) {
-          return `Blocked: Cannot transfer more than half your balance. Self-preservation.`;
+        let outcome;
+        try {
+          outcome = await ctx.treasury.executeCreditTransfer({
+            operation: "child_funding",
+            recipient: child.address,
+            amountCents: amount,
+            note: `fund child ${child.id}`,
+          });
+        } catch (error) {
+          if (error instanceof Error && error.name === "TreasuryDeniedError") {
+            return `Blocked: TreasuryGate denied child funding: ${error.message}`;
+          }
+          throw error;
         }
-
-        const transfer = await ctx.conway.transferCredits(
-          child.address,
-          amount,
-          `fund child ${child.id}`,
-        );
+        const { transfer, balanceBeforeCents: balance } = outcome;
 
         const { ulid } = await import("ulid");
         ctx.db.insertTransaction({
@@ -1816,6 +1837,9 @@ Model: ${ctx.inference.getDefaultModel()}
         required: ["child_id"],
       },
       execute: async (args, ctx) => {
+        if (!ctx.treasury) {
+          return "Blocked: TreasuryGate is required for x402 payments.";
+        }
         const child = ctx.db.getChildById(args.child_id as string);
         if (!child) return `Child ${args.child_id} not found.`;
 
@@ -2777,6 +2801,8 @@ Model: ${ctx.inference.getDefaultModel()}
           body,
           extraHeaders,
           maxPayment,
+          chainType,
+          ctx.treasury,
         );
 
         if (!result.success) {
@@ -3316,8 +3342,20 @@ export async function executeTool(
     };
   }
 
-  // Policy evaluation (if engine is provided)
-  if (policyEngine && turnContext) {
+  // Policy and provenance context are mandatory. A missing security boundary
+  // is an execution failure, never a backward-compatible allow path.
+  if (!policyEngine || !turnContext) {
+    return {
+      id: ulid(),
+      name: toolName,
+      arguments: args,
+      result: "",
+      durationMs: Date.now() - startTime,
+      error: "POLICY_CONTEXT_REQUIRED: tool execution denied without PolicyEngine and provenance context",
+    };
+  }
+
+  {
     const request: PolicyRequest = {
       tool,
       args,
@@ -3345,50 +3383,6 @@ export async function executeTool(
     // Sanitize results from external source tools
     if (EXTERNAL_SOURCE_TOOLS.has(toolName)) {
       result = sanitizeToolResult(result);
-    }
-
-    // Record spend for financial operations
-    if (turnContext && !result.startsWith("Blocked:")) {
-      if (toolName === "transfer_credits") {
-        const amount = args.amount_cents as number | undefined;
-        if (amount && amount > 0) {
-          try {
-            turnContext.sessionSpend.recordSpend({
-              toolName: "transfer_credits",
-              amountCents: amount,
-              recipient: args.to_address as string | undefined,
-              category: "transfer",
-            });
-          } catch (error) {
-            logger.error(
-              "Spend tracking failed for transfer_credits",
-              error instanceof Error ? error : undefined,
-            );
-          }
-        }
-      } else if (toolName === "x402_fetch") {
-        // x402 payment amounts are determined by the server response,
-        // but we record a nominal entry for tracking purposes
-        try {
-          turnContext.sessionSpend.recordSpend({
-            toolName: "x402_fetch",
-            amountCents: 0, // Actual amount is inside the x402 protocol
-            domain: (() => {
-              try {
-                return new URL(args.url as string).hostname;
-              } catch {
-                return undefined;
-              }
-            })(),
-            category: "x402",
-          });
-        } catch (error) {
-          logger.error(
-            "Spend tracking failed for x402_fetch",
-            error instanceof Error ? error : undefined,
-          );
-        }
-      }
     }
 
     return {

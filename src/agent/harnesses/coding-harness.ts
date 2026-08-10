@@ -1,4 +1,3 @@
-import { exec as execCb } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { TaskResult } from "../../orchestration/task-graph.js";
@@ -83,8 +82,8 @@ When calling task_done, provide:
           try {
             const result = await this.context.conway.exec(command, timeoutMs);
             return formatExecResult(result.stdout ?? "", result.stderr ?? "");
-          } catch {
-            return localExec(command, timeoutMs);
+          } catch (error) {
+            return `Blocked: remote execution failed and host fallback is disabled: ${error instanceof Error ? error.message : String(error)}`;
           }
         },
       },
@@ -302,16 +301,4 @@ function formatExecResult(stdout: string, stderr: string): string {
     ? stderr.slice(0, 4000) + "\n[TRUNCATED]"
     : stderr;
   return err ? `stdout:\n${out}\nstderr:\n${err}` : out || "(no output)";
-}
-
-function localExec(command: string, timeoutMs: number): Promise<string> {
-  return new Promise((resolve) => {
-    execCb(command, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error && !stdout && !stderr) {
-        resolve(`exec error: ${error.message}`);
-        return;
-      }
-      resolve(formatExecResult(stdout ?? "", stderr ?? ""));
-    });
-  });
 }

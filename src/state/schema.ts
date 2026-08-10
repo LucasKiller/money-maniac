@@ -5,7 +5,7 @@
  * The database IS the automaton's memory.
  */
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 export const CREATE_TABLES = `
   -- Schema version tracking
@@ -678,4 +678,31 @@ export const MIGRATION_V10 = `
 
   CREATE INDEX idx_knowledge_category ON knowledge_store(category);
   CREATE INDEX idx_knowledge_key ON knowledge_store(key);
+`;
+
+export const MIGRATION_V12 = `
+  -- Schema version: 12
+  -- Durable financial authorization, idempotency and reconciliation ledger.
+  CREATE TABLE IF NOT EXISTS treasury_intents (
+    id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    operation TEXT NOT NULL,
+    status TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+    recipient TEXT,
+    domain TEXT,
+    balance_before_cents INTEGER,
+    balance_after_cents INTEGER,
+    external_id TEXT,
+    metadata TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    settled_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_treasury_intents_status
+    ON treasury_intents(status, created_at);
+  CREATE INDEX IF NOT EXISTS idx_treasury_intents_operation
+    ON treasury_intents(operation, created_at);
 `;

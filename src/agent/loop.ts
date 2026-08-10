@@ -23,8 +23,9 @@ import type {
   SpendTrackerInterface,
   InputSource,
   ModelStrategyConfig,
+  TreasuryGateInterface,
 } from "../types.js";
-import { DEFAULT_MODEL_STRATEGY_CONFIG } from "../types.js";
+import { DEFAULT_MODEL_STRATEGY_CONFIG, DEFAULT_TREASURY_POLICY } from "../types.js";
 import type { PolicyEngine } from "./policy-engine.js";
 import { buildSystemPrompt, buildWakeupPrompt } from "./system-prompt.js";
 import { buildContextMessages, trimContext } from "./context.js";
@@ -65,6 +66,7 @@ import { createWorkerInferenceBridge } from "./worker-inference-bridge.js";
 import { ProviderRegistry } from "../inference/provider-registry.js";
 import { UnifiedInferenceClient } from "../inference/inference-client.js";
 import { isIdleOnlyTool } from "./idle-only-tools.js";
+import { TreasuryGate } from "./treasury-gate.js";
 
 const logger = createLogger("loop");
 const MAX_TOOL_CALLS_PER_TURN = 10;
@@ -81,6 +83,7 @@ export interface AgentLoopOptions {
   skills?: Skill[];
   policyEngine?: PolicyEngine;
   spendTracker?: SpendTrackerInterface;
+  treasury?: TreasuryGateInterface;
   onStateChange?: (state: AgentState) => void;
   onTurnComplete?: (turn: AgentTurn) => void;
   ollamaBaseUrl?: string;
@@ -99,6 +102,11 @@ export async function runAgentLoop(
   const builtinTools = createBuiltinTools(identity.sandboxId);
   const installedTools = loadInstalledTools(db);
   const tools = [...builtinTools, ...installedTools];
+  const treasury = options.treasury ?? new TreasuryGate(
+      db.raw,
+      conway,
+      { ...DEFAULT_TREASURY_POLICY, ...(config.treasuryPolicy ?? {}) },
+    );
   const toolContext: ToolContext = {
     identity,
     config,
@@ -106,6 +114,7 @@ export async function runAgentLoop(
     conway,
     inference,
     social,
+    treasury,
   };
 
   // Initialize inference router (Phase 2.3)
@@ -246,7 +255,7 @@ export async function runAgentLoop(
               const is402 = sandboxError?.status === 402 ||
                 sandboxError?.message?.includes("INSUFFICIENT_CREDITS");
 
-              if (is402) {
+              if (is402 && config.enableAutonomousTopup) {
                 const SANDBOX_TOPUP_COOLDOWN_MS = 60_000;
                 const lastAttempt = db.getKV("last_sandbox_topup_attempt");
                 const cooldownExpired = !lastAttempt ||
@@ -261,6 +270,7 @@ export async function runAgentLoop(
                       account: identity.account,
                       error: sandboxError,
                       chainType: config.chainType || identity.chainType || "evm",
+                      treasury,
                     });
 
                     if (topupResult?.success) {
@@ -306,6 +316,13 @@ export async function runAgentLoop(
                 taskId: task.id,
                 error: sandboxError instanceof Error ? sandboxError.message : String(sandboxError),
               });
+
+              if (!config.allowUnsafeLocalWorkers) {
+                logger.warn("Local worker fallback denied: allowUnsafeLocalWorkers is false", {
+                  taskId: task.id,
+                });
+                return null;
+              }
 
               try {
                 const spawned = initializedWorkerPool.spawn(task);
@@ -421,7 +438,7 @@ export async function runAgentLoop(
               return `[Message from ${from.content}]: ${content.content}`;
             })
             .join("\n\n");
-          pendingInput = { content: formatted, source: "agent" };
+          pendingInput = { content: formatted, source: "untrusted_peer" };
         }
       }
 
@@ -441,7 +458,11 @@ export async function runAgentLoop(
         // available, buy credits NOW — before attempting inference.
         // This prevents the agent from dying mid-loop while waiting for
         // the heartbeat to fire. Uses a 60s cooldown to avoid hammering.
-        if ((tier === "critical" || tier === "low_compute") && financial.usdcBalance >= 5) {
+        if (
+          config.enableAutonomousTopup &&
+          (tier === "critical" || tier === "low_compute") &&
+          financial.usdcBalance >= 5
+        ) {
           const INLINE_TOPUP_COOLDOWN_MS = 60_000;
           const lastInlineTopup = db.getKV("last_inline_topup_attempt");
           const cooldownExpired = !lastInlineTopup ||
@@ -456,6 +477,7 @@ export async function runAgentLoop(
                 account: identity.account,
                 creditsCents: financial.creditsCents,
                 chainType: config.chainType || identity.chainType || "evm",
+                treasury,
               });
               if (topupResult?.success) {
                 log(config, `[AUTO-TOPUP] Bought $${topupResult.amountUsd} credits from USDC mid-loop`);

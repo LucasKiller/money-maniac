@@ -123,11 +123,24 @@ export class PolicyEngine {
   static deriveAuthorityLevel(
     inputSource: InputSource | undefined,
   ): AuthorityLevel {
-    if (inputSource === undefined || inputSource === "heartbeat") {
+    if (
+      inputSource === undefined ||
+      inputSource === "heartbeat" ||
+      inputSource === "untrusted_peer" ||
+      inputSource === "external" ||
+      inputSource === "web" ||
+      inputSource === "tool_result"
+    ) {
       return "external";
     }
-    if (inputSource === "creator" || inputSource === "agent") {
-      return "agent";
+    if (inputSource === "creator") {
+      return "creator";
+    }
+    if (inputSource === "agent" || inputSource === "self") {
+      return "self";
+    }
+    if (inputSource === "trusted_child" || inputSource === "trusted_peer") {
+      return "trusted";
     }
     if (inputSource === "system" || inputSource === "wakeup") {
       return "system";

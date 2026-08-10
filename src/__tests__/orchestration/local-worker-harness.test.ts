@@ -177,6 +177,9 @@ describe("orchestration/LocalWorkerPool harness integration", () => {
     expect(row?.result).toMatchObject({ success: true, output: "completed by harness" });
     expect(SuccessHarness.capturedContext?.budget.maxTurns).toBe(7);
     expect(SuccessHarness.capturedContext?.allowedEditRoot).toBe(process.cwd());
+    expect(SuccessHarness.capturedContext?.identity.chainIdentity).toBeUndefined();
+    await expect(SuccessHarness.capturedContext!.identity.account.signMessage({ message: "test" }))
+      .rejects.toThrow("not permitted to access the parent signer");
   });
 
   it("marks the task as failed when the harness reports failure", async () => {

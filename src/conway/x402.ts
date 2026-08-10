@@ -15,6 +15,7 @@ import {
 import { base, baseSepolia } from "viem/chains";
 import { ResilientHttpClient } from "./http-client.js";
 import type { ChainType } from "../identity/chain.js";
+import type { TreasuryGateInterface } from "../types.js";
 
 const x402HttpClient = new ResilientHttpClient();
 
@@ -59,11 +60,18 @@ interface ParsedPaymentRequirement {
   requirement: PaymentRequirement;
 }
 
-interface X402PaymentResult {
+export interface X402PaymentResult {
   success: boolean;
   response?: any;
   error?: string;
   status?: number;
+  paymentAttempted?: boolean;
+  amountCents?: number;
+  intentId?: string;
+  recipient?: string;
+  network?: string;
+  token?: string;
+  nonce?: string;
 }
 
 export interface UsdcBalanceResult {
@@ -79,6 +87,12 @@ function safeJsonParse(value: string): unknown | null {
   } catch {
     return null;
   }
+}
+
+async function readResponseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return "";
+  return safeJsonParse(text) ?? text;
 }
 
 function parsePositiveInt(value: unknown): number | null {
@@ -317,6 +331,7 @@ export async function x402Fetch(
   headers?: Record<string, string>,
   maxPaymentCents?: number,
   chainType?: ChainType,
+  treasury?: TreasuryGateInterface,
 ): Promise<X402PaymentResult> {
   // Solana wallets cannot sign EVM x402 payments
   if (chainType === "solana") {
@@ -325,6 +340,16 @@ export async function x402Fetch(
       error: "x402 payment requires an EVM wallet. Solana automatons should use Conway credits API instead.",
     };
   }
+
+  let intentId: string | undefined;
+  let paymentAttempted = false;
+  let paymentDetails: {
+    amountCents: number;
+    recipient: string;
+    network: string;
+    token: string;
+    nonce?: string;
+  } | undefined;
 
   try {
     // Initial request (non-mutating probe, uses resilient client)
@@ -335,9 +360,7 @@ export async function x402Fetch(
     });
 
     if (initialResp.status !== 402) {
-      const data = await initialResp
-        .json()
-        .catch(() => initialResp.text());
+      const data = await readResponseBody(initialResp);
       return { success: initialResp.ok, response: data, status: initialResp.status };
     }
 
@@ -351,14 +374,25 @@ export async function x402Fetch(
       };
     }
 
+    if (parsed.requirement.scheme !== "exact") {
+      return { success: false, error: `Unsupported x402 scheme: ${parsed.requirement.scheme}`, status: 402 };
+    }
+    const expectedUsdc = USDC_ADDRESSES[parsed.requirement.network];
+    if (!expectedUsdc || parsed.requirement.usdcAddress.toLowerCase() !== expectedUsdc.toLowerCase()) {
+      return { success: false, error: "x402 token contract is not the pinned USDC contract", status: 402 };
+    }
+
+    const amountAtomic = parseMaxAmountRequired(
+      parsed.requirement.maxAmountRequired,
+      parsed.x402Version,
+    );
+    const amountCents = Number(amountAtomic) / 10_000;
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+      return { success: false, error: "x402 amount is not an exact positive number of cents", status: 402 };
+    }
+
     // Check amount against maxPaymentCents BEFORE signing
     if (maxPaymentCents !== undefined) {
-      const amountAtomic = parseMaxAmountRequired(
-        parsed.requirement.maxAmountRequired,
-        parsed.x402Version,
-      );
-      // Convert atomic units (6 decimals) to cents (2 decimals)
-      const amountCents = Number(amountAtomic) / 10_000;
       if (amountCents > maxPaymentCents) {
         return {
           success: false,
@@ -368,6 +402,29 @@ export async function x402Fetch(
       }
     }
 
+    if (!treasury) {
+      return {
+        success: false,
+        error: "Treasury authorization is required before signing an x402 payment",
+        status: 402,
+      };
+    }
+
+    const domain = new URL(url).hostname.toLowerCase();
+    const authorization = await treasury.reservePayment({
+      operation: url.includes("/pay/") ? "credit_topup" : "x402",
+      amountCents,
+      recipient: parsed.requirement.payToAddress,
+      domain,
+    });
+    intentId = authorization.intentId;
+    paymentDetails = {
+      amountCents,
+      recipient: parsed.requirement.payToAddress,
+      network: parsed.requirement.network,
+      token: parsed.requirement.usdcAddress,
+    };
+
     // Sign payment
     let payment: any;
     try {
@@ -376,7 +433,11 @@ export async function x402Fetch(
         parsed.requirement,
         parsed.x402Version,
       );
+      paymentDetails.nonce = payment.payload.authorization.nonce;
+      treasury.markSigned(intentId, paymentDetails);
+      paymentAttempted = true;
     } catch (err: any) {
+      treasury.markFailed(intentId, err?.message || String(err), false);
       return {
         success: false,
         error: `Failed to sign payment: ${err?.message || String(err)}`,
@@ -389,6 +450,8 @@ export async function x402Fetch(
       JSON.stringify(payment),
     ).toString("base64");
 
+    treasury.markSubmitted(intentId, paymentDetails);
+
     const paidResp = await x402HttpClient.request(url, {
       method,
       headers: {
@@ -400,10 +463,50 @@ export async function x402Fetch(
       retries: 0, // Paid request: do not auto-retry (payment already signed)
     });
 
-    const data = await paidResp.json().catch(() => paidResp.text());
-    return { success: paidResp.ok, response: data, status: paidResp.status };
+    const data = await readResponseBody(paidResp);
+    if (paidResp.ok) {
+      treasury.markSettled(intentId, { ...paymentDetails, responseStatus: paidResp.status });
+    } else {
+      treasury.markFailed(intentId, `Paid request returned HTTP ${paidResp.status}`, true);
+    }
+    return {
+      success: paidResp.ok,
+      response: data,
+      status: paidResp.status,
+      paymentAttempted,
+      amountCents,
+      intentId,
+      recipient: paymentDetails.recipient,
+      network: paymentDetails.network,
+      token: paymentDetails.token,
+      nonce: paymentDetails.nonce,
+      error: paidResp.ok ? undefined : `Paid request returned HTTP ${paidResp.status}; settlement is uncertain`,
+    };
   } catch (err: any) {
-    return { success: false, error: err.message };
+    if (intentId && paymentAttempted) {
+      try {
+        treasury?.markFailed(intentId, err?.message || String(err), true);
+      } catch {
+        // Preserve the original failure; the durable intent remains non-terminal.
+      }
+    } else if (intentId) {
+      try {
+        treasury?.markFailed(intentId, err?.message || String(err), false);
+      } catch {
+        // Preserve the original failure.
+      }
+    }
+    return {
+      success: false,
+      error: err.message,
+      paymentAttempted,
+      intentId,
+      amountCents: paymentDetails?.amountCents,
+      recipient: paymentDetails?.recipient,
+      network: paymentDetails?.network,
+      token: paymentDetails?.token,
+      nonce: paymentDetails?.nonce,
+    };
   }
 }
 

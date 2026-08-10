@@ -54,6 +54,11 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
 
     const tier = ctx.survivalTier;
 
+    if (credits < 0) {
+      taskCtx.db.setKV("last_credit_check_error", new Date().toISOString());
+      return { shouldWake: true, message: "Credit balance API is unavailable; financial actions remain disabled." };
+    }
+
     const payload = {
       name: taskCtx.config.name,
       address: taskCtx.identity.address,
@@ -95,6 +100,15 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     const credits = ctx.creditBalance;
     const tier = ctx.survivalTier;
     const now = new Date().toISOString();
+
+    if (credits < 0) {
+      taskCtx.db.setKV("last_credit_check", JSON.stringify({
+        credits: null,
+        tier: "unknown",
+        timestamp: now,
+      }));
+      return { shouldWake: true, message: "Credit balance is unknown; retrying later without topup." };
+    }
 
     taskCtx.db.setKV("last_credit_check", JSON.stringify({
       credits,
@@ -157,7 +171,13 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     }));
 
     const MIN_TOPUP_USD = 5;
-    if (balance >= MIN_TOPUP_USD && (ctx.survivalTier === "critical" || ctx.survivalTier === "dead")) {
+    if (
+      taskCtx.config.enableAutonomousTopup &&
+      taskCtx.treasury &&
+      credits >= 0 &&
+      balance >= MIN_TOPUP_USD &&
+      (ctx.survivalTier === "critical" || ctx.survivalTier === "dead")
+    ) {
       // Cooldown: don't attempt more than once every 5 minutes to avoid
       // hammering the payment endpoint on repeated ticks.
       const AUTO_TOPUP_COOLDOWN_MS = 5 * 60 * 1000;
@@ -174,6 +194,7 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
         account: taskCtx.identity.account,
         creditsCents: credits,
         chainType: taskCtx.config.chainType || taskCtx.identity.chainType || "evm",
+        treasury: taskCtx.treasury,
       });
 
       if (result?.success) {

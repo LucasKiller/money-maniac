@@ -39,7 +39,13 @@ function deny(
  * Check if an input source represents external (non-agent) authority.
  */
 function isExternalSource(inputSource: string | undefined): boolean {
-  return inputSource === undefined || inputSource === "heartbeat";
+  return inputSource === undefined || [
+    "heartbeat",
+    "untrusted_peer",
+    "external",
+    "web",
+    "tool_result",
+  ].includes(inputSource);
 }
 
 /**
@@ -54,29 +60,72 @@ function isExternalSource(inputSource: string | undefined): boolean {
  * they are core agent functionality already guarded by other policy rules
  * (financial limits, rate limits, path protection, etc.).
  */
-const EXTERNAL_BLOCKED_TOOLS = [
-  "delete_sandbox",
-  "spawn_child",
-  "fund_child",
-  "update_genesis_prompt",
-] as const;
-
 /**
- * Deny specific high-risk tools when input comes from external sources.
- * Only agent-initiated or creator turns can use these tools.
+ * External content may inform reasoning, but it cannot authorize any tool
+ * carrying side effects. Sanitization never promotes authority.
  */
 function createExternalToolRestrictionRule(): PolicyRule {
   return {
     id: "authority.external_tool_restriction",
     description: "Deny destructive/high-autonomy tools from external/heartbeat input sources",
     priority: 400,
-    appliesTo: { by: "name", names: [...EXTERNAL_BLOCKED_TOOLS] },
+    appliesTo: { by: "all" },
     evaluate(request: PolicyRequest): PolicyRuleResult | null {
-      if (isExternalSource(request.turnContext.inputSource)) {
+      if (isExternalSource(request.turnContext.inputSource) && request.tool.riskLevel !== "safe") {
         return deny(
           "authority.external_tool_restriction",
           "EXTERNAL_DANGEROUS_TOOL",
           `External input (source: ${request.turnContext.inputSource ?? "undefined"}) cannot use dangerous tool "${request.tool.name}"`,
+        );
+      }
+      return null;
+    },
+  };
+}
+
+function createDelegatedAuthorityRestrictionRule(): PolicyRule {
+  return {
+    id: "authority.delegated_dangerous_restriction",
+    description: "Trusted peers and children cannot authorize dangerous or financial actions",
+    priority: 400,
+    appliesTo: { by: "all" },
+    evaluate(request: PolicyRequest): PolicyRuleResult | null {
+      const delegated = request.turnContext.inputSource === "trusted_child" ||
+        request.turnContext.inputSource === "trusted_peer";
+      if (
+        delegated &&
+        (request.tool.riskLevel === "dangerous" ||
+          request.tool.riskLevel === "forbidden" ||
+          request.tool.category === "financial")
+      ) {
+        return deny(
+          "authority.delegated_dangerous_restriction",
+          "DELEGATED_AUTHORITY_INSUFFICIENT",
+          `Delegated source ${request.turnContext.inputSource} cannot authorize ${request.tool.name}`,
+        );
+      }
+      return null;
+    },
+  };
+}
+
+function createDependencyInstallationAuthorityRule(): PolicyRule {
+  return {
+    id: "authority.dependency_installation",
+    description: "Only creator or system authority may install executable dependencies",
+    priority: 400,
+    appliesTo: {
+      by: "name",
+      names: ["install_npm_package", "install_mcp_server", "install_skill"],
+    },
+    evaluate(request: PolicyRequest): PolicyRuleResult | null {
+      if (request.turnContext.inputSource !== "creator" &&
+          request.turnContext.inputSource !== "system" &&
+          request.turnContext.inputSource !== "wakeup") {
+        return deny(
+          "authority.dependency_installation",
+          "DEPENDENCY_INSTALL_REQUIRES_CREATOR",
+          `Installing executable dependencies requires creator/system authority; received ${request.turnContext.inputSource ?? "undefined"}`,
         );
       }
       return null;
@@ -124,7 +173,9 @@ function createSelfModFromExternalRule(): PolicyRule {
  */
 export function createAuthorityRules(): PolicyRule[] {
   return [
-    createExternalToolRestrictionRule(),
     createSelfModFromExternalRule(),
+    createExternalToolRestrictionRule(),
+    createDelegatedAuthorityRestrictionRule(),
+    createDependencyInstallationAuthorityRule(),
   ];
 }

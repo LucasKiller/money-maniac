@@ -16,6 +16,8 @@ import {
   createTestConfig,
 } from "./mocks.js";
 import type { AutomatonDatabase, ToolContext, AutomatonTool, RiskLevel } from "../types.js";
+import { DEFAULT_TREASURY_POLICY } from "../types.js";
+import { TreasuryGate } from "../agent/treasury-gate.js";
 
 // Mock erc8004.js to avoid ABI parse error
 vi.mock("../registry/erc8004.js", () => ({
@@ -161,6 +163,7 @@ describe("write_file / edit_own_file protection parity", () => {
       db,
       conway,
       inference: new MockInferenceClient(),
+      treasury: new TreasuryGate(db.raw, conway, DEFAULT_TREASURY_POLICY),
     };
   });
 
@@ -521,6 +524,7 @@ describe("transfer_credits self-preservation", () => {
       db,
       conway,
       inference: new MockInferenceClient(),
+      treasury: new TreasuryGate(db.raw, conway, DEFAULT_TREASURY_POLICY),
     };
   });
 
@@ -528,14 +532,14 @@ describe("transfer_credits self-preservation", () => {
     db.close();
   });
 
-  it("blocks transfer of more than half balance", async () => {
+  it("blocks transfers above the Treasury single-transfer limit", async () => {
     const transferTool = tools.find((t) => t.name === "transfer_credits")!;
     const result = await transferTool.execute(
       { to_address: "0xrecipient", amount_cents: 6000 },
       ctx,
     );
     expect(result).toContain("Blocked");
-    expect(result).toContain("Self-preservation");
+    expect(result).toContain("maximum single-transfer limit");
   });
 
   it("allows transfer of less than half balance", async () => {

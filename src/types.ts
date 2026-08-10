@@ -63,6 +63,12 @@ export interface AutomatonConfig {
   agentId?: string;
   maxChildren: number;
   maxTurnsPerCycle?: number;
+  /** Unsafe compatibility escape hatch. Local workers share the host process. Default false. */
+  allowUnsafeLocalWorkers?: boolean;
+  /** Allow shell commands on the host when no remote sandbox ID exists. Default false. */
+  allowUnsafeHostExecution?: boolean;
+  /** Autonomous wallet-funded topups are disabled until reconciliation is configured. */
+  enableAutonomousTopup?: boolean;
   /** Child sandbox memory config (MB), default 1024 */
   childSandboxMemoryMb?: number;
   parentAddress?: string;
@@ -88,6 +94,9 @@ export const DEFAULT_CONFIG: Partial<AutomatonConfig> = {
   skillsDir: "~/.automaton/skills",
   maxChildren: 3,
   maxTurnsPerCycle: 25,
+  allowUnsafeLocalWorkers: false,
+  allowUnsafeHostExecution: false,
+  enableAutonomousTopup: false,
   childSandboxMemoryMb: 1024,
   socialRelayUrl: "https://social.conway.tech",
 };
@@ -119,6 +128,13 @@ export type InputSource =
   | "heartbeat"
   | "creator"
   | "agent"
+  | "self"
+  | "trusted_child"
+  | "trusted_peer"
+  | "untrusted_peer"
+  | "external"
+  | "web"
+  | "tool_result"
   | "system"
   | "wakeup";
 
@@ -170,6 +186,8 @@ export interface ToolContext {
   conway: ConwayClient;
   inference: InferenceClient;
   social?: SocialClientInterface;
+  /** Mandatory authorization boundary for every financial operation. */
+  treasury?: TreasuryGateInterface;
 }
 
 export interface SocialClientInterface {
@@ -369,6 +387,7 @@ export interface ConwayClient {
     toAddress: string,
     amountCents: number,
     note?: string,
+    options?: { idempotencyKey?: string },
   ): Promise<CreditTransferResult>;
   registerAutomaton(params: {
     automatonId: string;
@@ -491,7 +510,7 @@ export type RiskLevel = 'safe' | 'caution' | 'dangerous' | 'forbidden';
 export type PolicyAction = 'allow' | 'deny' | 'quarantine';
 
 // Who initiated the action
-export type AuthorityLevel = 'system' | 'agent' | 'external';
+export type AuthorityLevel = 'system' | 'creator' | 'self' | 'trusted' | 'agent' | 'external';
 
 // Spend categories
 export type SpendCategory = 'transfer' | 'x402' | 'inference' | 'other';
@@ -548,6 +567,56 @@ export interface SpendTrackerInterface {
   getTotalSpend(category: SpendCategory, since: Date): number;
   checkLimit(amount: number, category: SpendCategory, limits: TreasuryPolicy): LimitCheckResult;
   pruneOldRecords(retentionDays: number): number;
+}
+
+export type TreasuryOperation = 'credit_transfer' | 'child_funding' | 'x402' | 'credit_topup';
+export type TreasuryIntentStatus =
+  | 'reserved'
+  | 'signed'
+  | 'submitted'
+  | 'settled'
+  | 'denied'
+  | 'failed'
+  | 'uncertain'
+  | 'reconciled';
+
+export interface TreasuryIntentRequest {
+  operation: TreasuryOperation;
+  amountCents: number;
+  recipient?: string;
+  domain?: string;
+  idempotencyKey?: string;
+}
+
+export interface TreasuryAuthorization {
+  intentId: string;
+  idempotencyKey: string;
+}
+
+export interface TreasuryTransferResult {
+  intentId: string;
+  transfer: CreditTransferResult;
+  balanceBeforeCents: number;
+}
+
+export interface TreasuryReconciliation {
+  outcome: 'settled' | 'not_settled';
+  evidence: string;
+  externalId?: string;
+  balanceAfterCents?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TreasuryGateInterface {
+  executeCreditTransfer(
+    request: TreasuryIntentRequest & { recipient: string; note?: string },
+  ): Promise<TreasuryTransferResult>;
+  reservePayment(request: TreasuryIntentRequest): Promise<TreasuryAuthorization>;
+  markSigned(intentId: string, metadata?: Record<string, unknown>): void;
+  markSubmitted(intentId: string, metadata?: Record<string, unknown>): void;
+  markSettled(intentId: string, metadata?: Record<string, unknown>): void;
+  markFailed(intentId: string, error: string, uncertain?: boolean): void;
+  reconcileIntent(intentId: string, reconciliation: TreasuryReconciliation): void;
 }
 
 export interface SpendEntry {
@@ -901,6 +970,7 @@ export interface HeartbeatLegacyContext {
   db: AutomatonDatabase;
   conway: ConwayClient;
   social?: SocialClientInterface;
+  treasury?: TreasuryGateInterface;
 }
 
 export interface HeartbeatScheduleRow {

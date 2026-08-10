@@ -34,6 +34,7 @@ import { DEFAULT_TREASURY_POLICY } from "./types.js";
 import { createLogger, setGlobalLogLevel, StructuredLogger } from "./observability/logger.js";
 import { prettySink } from "./observability/pretty-sink.js";
 import { bootstrapTopup } from "./conway/topup.js";
+import { TreasuryGate } from "./agent/treasury-gate.js";
 import { randomUUID } from "crypto";
 import { keccak256, toHex } from "viem";
 
@@ -243,6 +244,7 @@ async function run(): Promise<void> {
     apiUrl: config.conwayApiUrl,
     apiKey,
     sandboxId: config.sandboxId,
+    allowLocalExecution: config.allowUnsafeHostExecution === true,
   });
 
   // Register automaton identity (one-time, immutable)
@@ -303,7 +305,11 @@ async function run(): Promise<void> {
   // Create social client (chain-aware: pass ChainIdentity for Solana signing)
   let social: SocialClientInterface | undefined;
   if (config.socialRelayUrl) {
-    social = createSocialClient(config.socialRelayUrl, resolvedChainType === "solana" ? chainIdentity : account);
+    social = createSocialClient(
+      config.socialRelayUrl,
+      resolvedChainType === "solana" ? chainIdentity : account,
+      db.raw,
+    );
     logger.info(`[${new Date().toISOString()}] Social relay: ${config.socialRelayUrl}`);
   }
 
@@ -312,6 +318,7 @@ async function run(): Promise<void> {
   const rules = createDefaultRules(treasuryPolicy);
   const policyEngine = new PolicyEngine(db.raw, rules);
   const spendTracker = new SpendTracker(db.raw);
+  const treasury = new TreasuryGate(db.raw, conway, treasuryPolicy);
 
   // Load and sync heartbeat config
   const heartbeatConfigPath = resolvePath(config.heartbeatConfigPath);
@@ -321,7 +328,7 @@ async function run(): Promise<void> {
   // Load skills
   const skillsDir = config.skillsDir || "~/.automaton/skills";
   let skills: Skill[] = [];
-  try {
+  if (config.enableAutonomousTopup) try {
     skills = loadSkills(skillsDir, db);
     logger.info(`[${new Date().toISOString()}] Loaded ${skills.length} skills.`);
   } catch (err: any) {
@@ -346,12 +353,15 @@ async function run(): Promise<void> {
     try {
       await Promise.race([
         (async () => {
-          const creditsCents = await conway.getCreditsBalance().catch(() => 0);
+          // Unknown balance is not zero. A failed balance lookup aborts the
+          // topup attempt and is handled by the outer fail-closed guard.
+          const creditsCents = await conway.getCreditsBalance();
           const topupResult = await bootstrapTopup({
             apiUrl: config.conwayApiUrl,
             account,
             creditsCents,
             chainType: resolvedChainType,
+            treasury,
           });
           if (topupResult?.success) {
             logger.info(
@@ -377,6 +387,7 @@ async function run(): Promise<void> {
     rawDb: db.raw,
     conway,
     social,
+    treasury,
     onWakeRequest: (reason) => {
       logger.info(`[HEARTBEAT] Wake request: ${reason}`);
       // Phase 1.1: Use wake_events table instead of KV wake_request
@@ -423,6 +434,7 @@ async function run(): Promise<void> {
         skills,
         policyEngine,
         spendTracker,
+        treasury,
         ollamaBaseUrl,
         onStateChange: (state: AgentState) => {
           logger.info(`[${new Date().toISOString()}] State: ${state}`);

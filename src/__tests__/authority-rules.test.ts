@@ -215,7 +215,7 @@ describe("Authority Rules", () => {
       expect(decision.reasonCode).toBe("EXTERNAL_DANGEROUS_TOOL");
     });
 
-    it("allows register_erc8004 from external input", () => {
+    it("blocks register_erc8004 from external input", () => {
       const rules = createAuthorityRules();
       const engine = new PolicyEngine(db, rules);
 
@@ -227,10 +227,10 @@ describe("Authority Rules", () => {
       const request = createRequest(tool, {}, undefined);
 
       const decision = engine.evaluate(request);
-      expect(decision.action).toBe("allow");
+      expect(decision.action).toBe("deny");
     });
 
-    it("allows register_erc8004 from heartbeat input", () => {
+    it("blocks register_erc8004 from heartbeat input", () => {
       const rules = createAuthorityRules();
       const engine = new PolicyEngine(db, rules);
 
@@ -242,10 +242,10 @@ describe("Authority Rules", () => {
       const request = createRequest(tool, {}, "heartbeat");
 
       const decision = engine.evaluate(request);
-      expect(decision.action).toBe("allow");
+      expect(decision.action).toBe("deny");
     });
 
-    it("allows give_feedback from external input", () => {
+    it("blocks give_feedback from external input", () => {
       const rules = createAuthorityRules();
       const engine = new PolicyEngine(db, rules);
 
@@ -257,7 +257,7 @@ describe("Authority Rules", () => {
       const request = createRequest(tool, {}, undefined);
 
       const decision = engine.evaluate(request);
-      expect(decision.action).toBe("allow");
+      expect(decision.action).toBe("deny");
     });
 
     it("allows destructive tools from agent input", () => {
@@ -339,7 +339,7 @@ describe("Authority Rules", () => {
       expect(decision.reasonCode).toBe("EXTERNAL_SELF_MOD");
     });
 
-    it("allows write_file on non-protected paths from external input", () => {
+    it("blocks write_file side effects even on non-protected paths from external input", () => {
       const rules = createAuthorityRules();
       const engine = new PolicyEngine(db, rules);
 
@@ -351,7 +351,8 @@ describe("Authority Rules", () => {
       const request = createRequest(tool, { path: "/app/src/data/output.txt" }, undefined);
 
       const decision = engine.evaluate(request);
-      expect(decision.action).toBe("allow");
+      expect(decision.action).toBe("deny");
+      expect(decision.reasonCode).toBe("EXTERNAL_DANGEROUS_TOOL");
     });
 
     it("allows edit_own_file on protected paths from agent input", () => {

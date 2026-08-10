@@ -177,8 +177,23 @@ function createWorkerIdentity(
   workerId: string,
   role: string | null,
 ): AutomatonIdentity {
+  const denySigning = async (): Promise<never> => {
+    throw new Error("Local workers are not permitted to access the parent signer");
+  };
+  const publicOnlyAccount = {
+    address: parentIdentity.account.address,
+    type: "local",
+    source: "custom",
+    publicKey: undefined,
+    signMessage: denySigning,
+    signTransaction: denySigning,
+    signTypedData: denySigning,
+  } as unknown as AutomatonIdentity["account"];
+
   return {
     ...parentIdentity,
+    account: publicOnlyAccount,
+    chainIdentity: undefined,
     name: `worker-${role ?? "generalist"}-${workerId.slice(-6)}`,
     address: `local://${workerId}`,
     sandboxId: workerId,

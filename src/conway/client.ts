@@ -33,6 +33,7 @@ interface ConwayClientOptions {
   apiUrl: string;
   apiKey: string;
   sandboxId: string;
+  allowLocalExecution?: boolean;
 }
 
 export function createConwayClient(options: ConwayClientOptions): ConwayClient {
@@ -130,7 +131,14 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     command: string,
     timeout?: number,
   ): Promise<ExecResult> => {
-    if (isLocal) return execLocal(command, timeout);
+    if (isLocal) {
+      if (!options.allowLocalExecution) {
+        throw new Error(
+          "Host shell execution is disabled. Configure a remote sandbox or explicitly opt into unsafe local execution.",
+        );
+      }
+      return execLocal(command, timeout);
+    }
 
     // Remote sandboxes default to / as cwd. Wrap commands to run from /root
     // (matching local exec behavior) unless the command already sets a directory.
@@ -314,6 +322,7 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     toAddress: string,
     amountCents: number,
     note?: string,
+    transferOptions?: { idempotencyKey?: string },
   ): Promise<CreditTransferResult> => {
     const payload = {
       to_address: toAddress,
@@ -321,7 +330,7 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
       note,
     };
 
-    const idempotencyKey = ulid();
+    const idempotencyKey = transferOptions?.idempotencyKey ?? ulid();
     const paths = ["/v1/credits/transfer", "/v1/credits/transfers"];
 
     let lastError = "Unknown transfer error";
