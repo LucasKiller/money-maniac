@@ -44,6 +44,7 @@ describe("supervised one-shot runtime", () => {
     const [, options] = vi.mocked(inference.chat).mock.calls[0];
     expect(options?.tools).toBeUndefined();
     expect(options?.maxTokens).toBe(1_024);
+    expect(options?.reasoningEffort).toBe("low");
     expect(result.content).toBe("Ready.");
     expect(result.tokenUsage.totalTokens).toBe(12);
   });
@@ -142,10 +143,15 @@ describe("supervised one-shot runtime", () => {
       requestTimeoutMs: 1_000,
     });
 
-    await expect(client.chat([
-      { role: "user", content: "Report readiness." },
-    ])).rejects.toThrow("Inference error (openai): 500");
+    await expect(client.chat(
+      [{ role: "user", content: "Report readiness." }],
+      { reasoningEffort: "low" },
+    )).rejects.toThrow("Inference error (openai): 500");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      reasoning_effort: "low",
+    });
     fetchMock.mockRestore();
   });
 

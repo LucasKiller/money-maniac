@@ -359,6 +359,7 @@ export interface InferenceOptions {
   model?: string;
   maxTokens?: number;
   temperature?: number;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
   tools?: InferenceToolDefinition[];
   stream?: boolean;
 }

@@ -100,6 +100,10 @@ export function createInferenceClient(
       body.temperature = opts.temperature;
     }
 
+    if (opts?.reasoningEffort !== undefined && backend === "openai") {
+      body.reasoning_effort = opts.reasoningEffort;
+    }
+
     if (tools && tools.length > 0) {
       body.tools = tools;
       body.tool_choice = "auto";
