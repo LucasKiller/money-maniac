@@ -27,6 +27,7 @@ services:
       AUTOMATON_START_MODE: ${AUTOMATON_START_MODE:-idle}
       CONWAY_API_URL: ${CONWAY_API_URL:-https://api.conway.tech}
       CONWAY_API_KEY: ${CONWAY_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
 
     volumes:
