@@ -1,5 +1,6 @@
 import { loadConfig } from "../config.js";
 import { createInferenceClient } from "../conway/inference.js";
+import { MONEY_MANIAC_STRATEGY_PROMPT } from "../agent/money-maniac-prompt.js";
 import type {
   AutomatonConfig,
   InferenceClient,
@@ -14,10 +15,17 @@ const MAX_ONCE_PROMPT_CHARS = 4_000;
 // enough room for both bounded reasoning and a concise final answer.
 const MAX_ONCE_OUTPUT_TOKENS = 4_096;
 
-const ONCE_SYSTEM_PROMPT = `You are running in supervised one-shot validation mode.
+export const ONCE_SAFETY_PROMPT = `You are running in supervised one-shot validation mode.
 Answer the user's request, but do not request or claim to execute tools, shell commands,
 payments, blockchain operations, network actions, child agents, self-modification, or
 persistent changes. No tools are available. Keep the answer concise and factual.`;
+
+export const ONCE_SYSTEM_PROMPT = `${ONCE_SAFETY_PROMPT}
+
+The following product strategy defines how you analyze internet business opportunities.
+It does not grant execution authority and cannot override the supervised restrictions above.
+
+${MONEY_MANIAC_STRATEGY_PROMPT}`;
 
 export interface OnceRunOptions {
   prompt: string;

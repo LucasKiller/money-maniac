@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { executeOnce, resolveOnceTimeout } from "../runtime/once.js";
+import {
+  executeOnce,
+  ONCE_SYSTEM_PROMPT,
+  resolveOnceTimeout,
+} from "../runtime/once.js";
 import { createInferenceClient } from "../conway/inference.js";
 import { createTestConfig } from "./mocks.js";
 import type { InferenceClient, InferenceResponse } from "../types.js";
@@ -41,6 +45,13 @@ describe("supervised one-shot runtime", () => {
     );
 
     expect(inference.chat).toHaveBeenCalledTimes(1);
+    const [messages] = vi.mocked(inference.chat).mock.calls[0];
+    expect(messages[0]).toMatchObject({
+      role: "system",
+      content: ONCE_SYSTEM_PROMPT,
+    });
+    expect(messages[0]?.content).toContain("Optimize for profitable outcomes.");
+    expect(messages[0]?.content).toContain("No tools are available.");
     const [, options] = vi.mocked(inference.chat).mock.calls[0];
     expect(options?.tools).toBeUndefined();
     expect(options?.maxTokens).toBe(2_048);
