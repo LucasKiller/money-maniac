@@ -238,11 +238,15 @@ async function run(): Promise<void> {
   // Load wallet (chain-aware)
   const { account, chainIdentity, chainType: walletChainType } = await getWallet();
   const resolvedChainType = config.chainType || walletChainType || "evm";
-  const apiKey = config.conwayApiKey || loadApiKeyFromConfig();
-  if (!apiKey) {
+  const configuredConwayApiKey = config.conwayApiKey || loadApiKeyFromConfig();
+  if (!configuredConwayApiKey && autonomy.profile !== "research") {
     logger.error("No API key found. Run: automaton --provision");
     process.exit(1);
   }
+  // The research profile never calls Conway, provisioning, x402, topup, or
+  // blockchain tools. Keep the client structurally available to the existing
+  // runtime without forcing the operator to provision an unused credential.
+  const apiKey = configuredConwayApiKey || "research-profile-disabled";
 
   // Initialize database
   const dbPath = resolvePath(config.dbPath);
