@@ -400,7 +400,7 @@ export async function runAgentLoop(
 
   // Get financial state
   let financial: FinancialState = autonomy.profile === "research"
-    ? { creditsCents: 10, usdcBalance: 0, lastChecked: new Date().toISOString() }
+    ? { creditsCents: 11, usdcBalance: 0, lastChecked: new Date().toISOString() }
     : await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "evm");
 
   // Check if this is the first run
