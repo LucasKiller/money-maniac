@@ -53,6 +53,11 @@ import { ulid } from "ulid";
 import { ModelRegistry } from "../inference/registry.js";
 import { InferenceBudgetTracker } from "../inference/budget.js";
 import { InferenceRouter } from "../inference/router.js";
+import { createResearchTools } from "./research-tools.js";
+import {
+  RESEARCH_ALLOWED_TOOLS,
+  resolveAutonomyLimits,
+} from "../security/autonomy-profile.js";
 import { MemoryRetriever } from "../memory/retrieval.js";
 import { MemoryIngestionPipeline } from "../memory/ingestion.js";
 import { DEFAULT_MEMORY_BUDGET } from "../types.js";
@@ -103,9 +108,13 @@ export async function runAgentLoop(
   const { identity, config, db, conway, inference, social, skills, policyEngine, spendTracker, onStateChange, onTurnComplete, ollamaBaseUrl } =
     options;
 
-  const builtinTools = createBuiltinTools(identity.sandboxId);
-  const installedTools = loadInstalledTools(db);
-  const tools = [...builtinTools, ...installedTools];
+  const autonomy = resolveAutonomyLimits();
+  const builtinTools = [...createBuiltinTools(identity.sandboxId), ...createResearchTools()];
+  const installedTools = autonomy.profile === "research" ? [] : loadInstalledTools(db);
+  const allTools = [...builtinTools, ...installedTools];
+  const tools = autonomy.profile === "research"
+    ? allTools.filter((tool) => RESEARCH_ALLOWED_TOOLS.has(tool.name))
+    : allTools.filter((tool) => tool.category !== "research");
   const effectiveSpendTracker = spendTracker ?? new SpendTracker(db.raw);
   const effectivePolicyEngine = policyEngine ?? new PolicyEngine(
     db.raw,
@@ -132,6 +141,11 @@ export async function runAgentLoop(
     ...DEFAULT_MODEL_STRATEGY_CONFIG,
     ...(config.modelStrategy ?? {}),
   };
+  if (autonomy.profile === "research") {
+    modelStrategyConfig.dailyBudgetCents = autonomy.dailyInferenceBudgetCents;
+    modelStrategyConfig.hourlyBudgetCents = autonomy.hourlyInferenceBudgetCents;
+    modelStrategyConfig.perCallCeilingCents = autonomy.perCallCeilingCents;
+  }
   const modelRegistry = new ModelRegistry(db.raw);
   modelRegistry.initialize();
 
@@ -148,7 +162,7 @@ export async function runAgentLoop(
   let orchestrator: Orchestrator | undefined;
   let workerPool: LocalWorkerPool | undefined;
 
-  if (hasTable(db.raw, "goals")) {
+  if (autonomy.profile !== "research" && hasTable(db.raw, "goals")) {
     try {
       planModeController = new PlanModeController(db.raw);
 
@@ -385,24 +399,28 @@ export async function runAgentLoop(
   onStateChange?.("waking");
 
   // Get financial state
-  let financial = await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "evm");
+  let financial: FinancialState = autonomy.profile === "research"
+    ? { creditsCents: 10, usdcBalance: 0, lastChecked: new Date().toISOString() }
+    : await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "evm");
 
   // Check if this is the first run
   const isFirstRun = db.getTurnCount() === 0;
 
   // Build wakeup prompt
-  const wakeupInput = buildWakeupPrompt({
-    identity,
-    config,
-    financial,
-    db,
-  });
+  const wakeupInput = autonomy.profile === "research"
+    ? "Continue the autonomous research mission. Use current public evidence, update the opportunity pipeline, and stop after producing a concrete auditable result for this cycle."
+    : buildWakeupPrompt({ identity, config, financial, db });
 
   // Transition to running
   db.setAgentState("running");
   onStateChange?.("running");
 
-  log(config, `[WAKE UP] ${config.name} is alive. Credits: $${(financial.creditsCents / 100).toFixed(2)}`);
+  log(
+    config,
+    autonomy.profile === "research"
+      ? `[WAKE UP] ${config.name} is running in bounded research mode.`
+      : `[WAKE UP] ${config.name} is alive. Credits: $${(financial.creditsCents / 100).toFixed(2)}`,
+  );
 
   // ─── The Loop ──────────────────────────────────────────────
 
@@ -422,6 +440,34 @@ export async function runAgentLoop(
     let claimedMessages: InboxMessageRow[] = [];
 
     try {
+      if (autonomy.killSwitch || process.env.AUTOMATON_KILL_SWITCH?.toLowerCase() === "true") {
+        log(config, "[KILL SWITCH] Autonomous execution is disabled.");
+        db.setKV("sleep_until", new Date(Date.now() + 86_400_000).toISOString());
+        db.setAgentState("sleeping");
+        onStateChange?.("sleeping");
+        break;
+      }
+
+      if (autonomy.profile === "research") {
+        const today = new Date().toISOString().slice(0, 10);
+        const dailyTurns = (db.raw.prepare(
+          "SELECT COUNT(*) AS count FROM turns WHERE timestamp >= ? AND timestamp < ?",
+        ).get(`${today}T00:00:00.000Z`, `${today}T23:59:59.999Z`) as { count: number }).count;
+        if (autonomy.maxTurnsPerDay > 0 && dailyTurns >= autonomy.maxTurnsPerDay) {
+          log(config, `[DAILY TURN LIMIT] ${dailyTurns}/${autonomy.maxTurnsPerDay} turns used.`);
+          db.setKV("sleep_until", new Date(Date.now() + 3_600_000).toISOString());
+          db.setAgentState("sleeping");
+          onStateChange?.("sleeping");
+          break;
+        }
+        const nextTurnAt = Number(db.getKV("autonomy.next_turn_at") || "0");
+        if (nextTurnAt > Date.now()) {
+          db.setKV("sleep_until", new Date(nextTurnAt).toISOString());
+          db.setAgentState("sleeping");
+          onStateChange?.("sleeping");
+          break;
+        }
+      }
       // Check if we should be sleeping
       const sleepUntil = db.getKV("sleep_until");
       if (sleepUntil && new Date(sleepUntil) > new Date()) {
@@ -453,7 +499,9 @@ export async function runAgentLoop(
       }
 
       // Refresh financial state periodically
-      financial = await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "evm");
+      if (autonomy.profile !== "research") {
+        financial = await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "evm");
+      }
 
       // Check survival tier
       // api_unreachable: creditsCents === -1 means API failed with no cache.
@@ -628,7 +676,9 @@ export async function runAgentLoop(
       pendingInput = undefined;
 
       // ── Inference Call (via router when available) ──
-      const survivalTier = getSurvivalTier(financial.creditsCents);
+      const survivalTier = autonomy.profile === "research"
+        ? "low_compute"
+        : getSurvivalTier(financial.creditsCents);
       log(config, `[THINK] Routing inference (tier: ${survivalTier}, model: ${inference.getDefaultModel()})...`);
 
       const inferenceTools = toolsToInferenceFormat(tools);
@@ -729,6 +779,9 @@ export async function runAgentLoop(
         }
       });
       onTurnComplete?.(turn);
+      if (autonomy.profile === "research" && autonomy.minTurnIntervalMs > 0) {
+        db.setKV("autonomy.next_turn_at", String(Date.now() + autonomy.minTurnIntervalMs));
+      }
 
       // Phase 2.2: Post-turn memory ingestion (non-blocking)
       try {

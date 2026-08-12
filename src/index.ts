@@ -38,6 +38,10 @@ import { TreasuryGate } from "./agent/treasury-gate.js";
 import { isFinancialExecutionEnabled } from "./security/financial-mode.js";
 import { randomUUID } from "crypto";
 import { keccak256, toHex } from "viem";
+import {
+  applyResearchProfile,
+  resolveAutonomyLimits,
+} from "./security/autonomy-profile.js";
 
 const logger = createLogger("main");
 const VERSION = "0.2.1";
@@ -220,6 +224,16 @@ async function run(): Promise<void> {
     const { runSetupWizard } = await import("./setup/wizard.js");
     config = await runSetupWizard();
   }
+  const autonomy = resolveAutonomyLimits();
+  config = applyResearchProfile(config, autonomy);
+  if (autonomy.killSwitch) {
+    logger.warn("AUTOMATON_KILL_SWITCH=true; refusing to start autonomous execution.");
+    return;
+  }
+  if (autonomy.profile === "research" && !(process.env.OPENAI_API_KEY || config.openaiApiKey)) {
+    throw new Error("Research autonomy requires OPENAI_API_KEY; Conway fallback is disabled");
+  }
+  logger.info(`[${new Date().toISOString()}] Autonomy profile: ${autonomy.profile}`);
 
   // Load wallet (chain-aware)
   const { account, chainIdentity, chainType: walletChainType } = await getWallet();
@@ -276,7 +290,7 @@ async function run(): Promise<void> {
 
   // Register automaton identity (one-time, immutable)
   const registrationState = db.getIdentity("conwayRegistrationStatus");
-  if (registrationState !== "registered") {
+  if (autonomy.profile !== "research" && registrationState !== "registered") {
     try {
       const genesisPromptHash = config.genesisPrompt
         ? keccak256(toHex(config.genesisPrompt))
@@ -307,7 +321,9 @@ async function run(): Promise<void> {
   }
 
   // Resolve Ollama base URL: env var takes precedence over config
-  const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || config.ollamaBaseUrl;
+  const ollamaBaseUrl = autonomy.profile === "research"
+    ? undefined
+    : process.env.OLLAMA_BASE_URL || config.ollamaBaseUrl;
 
   // Create inference client — pass a live registry lookup so model names like
   // "gpt-oss:120b" route to Ollama based on their registered provider, not heuristics.
@@ -319,7 +335,7 @@ async function run(): Promise<void> {
     defaultModel: config.inferenceModel,
     maxTokens: config.maxTokensPerTurn,
     lowComputeModel: config.modelStrategy?.lowComputeModel || "gpt-5-mini",
-    openaiApiKey: config.openaiApiKey,
+    openaiApiKey: process.env.OPENAI_API_KEY || config.openaiApiKey,
     anthropicApiKey: config.anthropicApiKey,
     ollamaBaseUrl,
     getModelProvider: (modelId) => modelRegistry.get(modelId)?.provider,
@@ -331,7 +347,7 @@ async function run(): Promise<void> {
 
   // Create social client (chain-aware: pass ChainIdentity for Solana signing)
   let social: SocialClientInterface | undefined;
-  if (config.socialRelayUrl) {
+  if (autonomy.profile !== "research" && config.socialRelayUrl) {
     social = createSocialClient(
       config.socialRelayUrl,
       resolvedChainType === "solana" ? chainIdentity : account,
@@ -365,7 +381,7 @@ async function run(): Promise<void> {
   }
 
   // Initialize state repo (git)
-  try {
+  if (autonomy.profile !== "research") try {
     await initStateRepo(conway);
     logger.info(`[${new Date().toISOString()}] State repo initialized.`);
   } catch (err: any) {
@@ -374,7 +390,7 @@ async function run(): Promise<void> {
 
   // Bootstrap topup: buy minimum credits ($5) from USDC so the agent can start.
   // The agent decides larger topups itself via the topup_credits tool.
-  try {
+  if (autonomy.profile !== "research") try {
     let bootstrapTimer: ReturnType<typeof setTimeout>;
     const bootstrapTimeout = new Promise<null>((_, reject) => {
       bootstrapTimer = setTimeout(() => reject(new Error("bootstrap topup timed out")), 15_000);
@@ -424,8 +440,12 @@ async function run(): Promise<void> {
     },
   });
 
-  heartbeat.start();
-  logger.info(`[${new Date().toISOString()}] Heartbeat daemon started.`);
+  if (autonomy.profile !== "research") {
+    heartbeat.start();
+    logger.info(`[${new Date().toISOString()}] Heartbeat daemon started.`);
+  } else {
+    logger.info(`[${new Date().toISOString()}] Research profile: heartbeat side effects disabled.`);
+  }
 
   // Handle graceful shutdown
   const shutdown = () => {
@@ -446,10 +466,12 @@ async function run(): Promise<void> {
   while (true) {
     try {
       // Reload skills (may have changed since last loop)
-      try {
-        skills = loadSkills(skillsDir, db);
-      } catch (error) {
-        logger.error("Skills reload failed", error instanceof Error ? error : undefined);
+      if (autonomy.profile !== "research") {
+        try {
+          skills = loadSkills(skillsDir, db);
+        } catch (error) {
+          logger.error("Skills reload failed", error instanceof Error ? error : undefined);
+        }
       }
 
       // Run the agent loop

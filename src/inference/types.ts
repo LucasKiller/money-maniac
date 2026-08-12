@@ -183,6 +183,7 @@ export const DEFAULT_MODEL_STRATEGY_CONFIG: ModelStrategyConfig = {
   criticalModel: "gpt-5-mini",
   maxTokensPerTurn: 4096,
   hourlyBudgetCents: 0,
+  dailyBudgetCents: 0,
   sessionBudgetCents: 0,
   perCallCeilingCents: 0,
   enableModelFallback: true,

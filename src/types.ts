@@ -180,7 +180,8 @@ export type ToolCategory =
   | "git"
   | "registry"
   | "replication"
-  | "memory";
+  | "memory"
+  | "research";
 
 export interface ToolContext {
   identity: AutomatonIdentity;
@@ -1316,6 +1317,7 @@ export interface ModelStrategyConfig {
   criticalModel: string;
   maxTokensPerTurn: number;
   hourlyBudgetCents: number; // default: 0 (no limit)
+  dailyBudgetCents: number; // default: 0 (no limit)
   sessionBudgetCents: number; // default: 0 (no limit)
   perCallCeilingCents: number; // default: 0 (no limit)
   enableModelFallback: boolean; // default: true
@@ -1328,6 +1330,7 @@ export const DEFAULT_MODEL_STRATEGY_CONFIG: ModelStrategyConfig = {
   criticalModel: "gpt-5-mini",
   maxTokensPerTurn: 4096,
   hourlyBudgetCents: 0,
+  dailyBudgetCents: 0,
   sessionBudgetCents: 0,
   perCallCeilingCents: 0,
   enableModelFallback: true,

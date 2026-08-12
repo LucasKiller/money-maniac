@@ -61,11 +61,16 @@ export class InferenceRouter {
       };
     }
 
-    // 2. Estimate cost and check budget
+    const preference = this.getPreference(tier, taskType);
+    const maxTokens = request.maxTokens || preference?.maxTokens || model.maxTokens;
+
+    // 2. Estimate cost and check budget using the same output-token ceiling
+    // that will be sent to the provider. Underestimating here can bypass the
+    // per-call, hourly, and daily limits.
     const estimatedTokens = messages.reduce((sum, m) => sum + (m.content?.length || 0) / 4, 0);
     const estimatedCostCents = Math.ceil(
       (estimatedTokens / 1000) * model.costPer1kInput / 100 +
-      (request.maxTokens || 1000) / 1000 * model.costPer1kOutput / 100,
+      maxTokens / 1000 * model.costPer1kOutput / 100,
     );
 
     const budgetCheck = this.budget.checkBudget(estimatedCostCents, model.modelId);
@@ -103,8 +108,6 @@ export class InferenceRouter {
     const transformedMessages = this.transformMessagesForProvider(messages, model.provider);
 
     // 5. Build inference options
-    const preference = this.getPreference(tier, taskType);
-    const maxTokens = request.maxTokens || preference?.maxTokens || model.maxTokens;
     const timeout = TASK_TIMEOUTS[taskType] || 120_000;
 
     const inferenceOptions: any = {

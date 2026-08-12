@@ -138,6 +138,27 @@ O container não recebe Docker socket, diretórios do host, dispositivos ou port
 
 ## Uso operacional
 
+### Run autônomo restrito a pesquisa
+
+```env
+AUTOMATON_START_MODE=run
+AUTOMATON_AUTONOMY_PROFILE=research
+AUTOMATON_FINANCIAL_MODE=disabled
+AUTOMATON_KILL_SWITCH=false
+AUTOMATON_OPENAI_DAILY_BUDGET_CENTS=25
+AUTOMATON_OPENAI_HOURLY_BUDGET_CENTS=5
+AUTOMATON_OPENAI_PER_CALL_CEILING_CENTS=2
+AUTOMATON_MAX_TURNS_PER_CYCLE=3
+AUTOMATON_MAX_TURNS_PER_DAY=12
+AUTOMATON_MIN_TURN_INTERVAL_MS=900000
+LANG=C.UTF-8
+LC_ALL=C.UTF-8
+```
+
+Nesse perfil, somente pesquisa web pública, análise, memória interna, planejamento e `sleep` são expostos ao modelo. Wallet, pagamentos, x402, shell, escrita de arquivos, self-modification, social inbox, envio de propostas, child agents, skills externas e orchestration ficam fora da lista de ferramentas.
+
+A pesquisa web aceita apenas HTTPS público na porta 443, resolve DNS antes da conexão, bloqueia endereços privados, limita redirects e respostas e marca todo conteúdo retornado como não confiável. Para interromper novos ciclos, altere `AUTOMATON_KILL_SWITCH=true` e faça redeploy.
+
 Comandos de leitura e diagnóstico:
 
 ```bash

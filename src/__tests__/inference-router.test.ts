@@ -344,6 +344,31 @@ describe("InferenceRouter", () => {
       expect(result.finishReason).toBe("budget_exceeded");
     });
 
+    it("uses the routed output-token limit when enforcing the per-call ceiling", async () => {
+      const strictBudget = new InferenceBudgetTracker(db, {
+        ...DEFAULT_MODEL_STRATEGY_CONFIG,
+        perCallCeilingCents: 1,
+      });
+      const strictRouter = new InferenceRouter(db, registry, strictBudget);
+      let called = false;
+
+      const result = await strictRouter.route(
+        {
+          messages: [{ role: "user", content: "short request" }],
+          taskType: "agent_turn",
+          tier: "low_compute",
+          sessionId: "max-output-budget-session",
+        },
+        async () => {
+          called = true;
+          return { message: { content: "" }, usage: {}, finishReason: "stop" };
+        },
+      );
+
+      expect(result.finishReason).toBe("budget_exceeded");
+      expect(called).toBe(false);
+    });
+
     it("enforces session budget when configured", async () => {
       const sessionBudget = new InferenceBudgetTracker(db, {
         ...DEFAULT_MODEL_STRATEGY_CONFIG,
@@ -566,6 +591,21 @@ describe("InferenceBudgetTracker", () => {
     const result = tracker.checkBudget(10, "gpt-4.1");
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain("Hourly budget exhausted");
+  });
+
+  it("checkBudget denies when daily limit would be exceeded", () => {
+    const tracker = new InferenceBudgetTracker(db, {
+      ...DEFAULT_MODEL_STRATEGY_CONFIG,
+      dailyBudgetCents: 20,
+    });
+    tracker.recordCost({
+      sessionId: "daily", turnId: null, model: "gpt-5-mini", provider: "openai",
+      inputTokens: 100, outputTokens: 50, costCents: 18,
+      latencyMs: 100, tier: "normal", taskType: "agent_turn", cacheHit: false,
+    });
+    const result = tracker.checkBudget(3, "gpt-5-mini");
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("Daily budget exhausted");
   });
 
   it("checkBudget allows when no limits are set (0 = unlimited)", () => {

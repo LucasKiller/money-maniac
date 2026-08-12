@@ -42,7 +42,9 @@ RUN pnpm install --prod --frozen-lockfile
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
-    HOME=/home/automaton
+    HOME=/home/automaton \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
 # tini forwards shutdown signals correctly. Git is required by the runtime's
 # state-versioning subsystem; no Docker or host socket is included.

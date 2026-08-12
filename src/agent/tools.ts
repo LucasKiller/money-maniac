@@ -54,6 +54,8 @@ function confinePathToSandbox(filePath: string): string | { error: string } {
 const EXTERNAL_SOURCE_TOOLS = new Set([
   "exec",
   "web_fetch",
+  "web_search",
+  "fetch_public_page",
   "check_social_inbox",
 ]);
 
