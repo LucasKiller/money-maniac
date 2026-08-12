@@ -159,6 +159,26 @@ Nesse perfil, somente pesquisa web pública, análise, memória interna, planeja
 
 A pesquisa web aceita apenas HTTPS público na porta 443, resolve DNS antes da conexão, bloqueia endereços privados, limita redirects e respostas e marca todo conteúdo retornado como não confiável. Para interromper novos ciclos, altere `AUTOMATON_KILL_SWITCH=true` e faça redeploy.
 
+### Run autônomo com operador limitado
+
+```env
+AUTOMATON_START_MODE=run
+AUTOMATON_AUTONOMY_PROFILE=operator
+AUTOMATON_FINANCIAL_MODE=treasury-gated
+AUTOMATON_KILL_SWITCH=false
+AUTOMATON_OPENAI_DAILY_BUDGET_CENTS=25
+AUTOMATON_OPENAI_HOURLY_BUDGET_CENTS=5
+AUTOMATON_OPENAI_PER_CALL_CEILING_CENTS=2
+AUTOMATON_MAX_TURNS_PER_CYCLE=3
+AUTOMATON_MAX_TURNS_PER_DAY=12
+AUTOMATON_MIN_TURN_INTERVAL_MS=900000
+AUTOMATON_MAX_EXTERNAL_ACTIONS_PER_DAY=3
+```
+
+O perfil `operator` mantém shell, instalação de pacotes, MCP executável, skills, self-modification, child agents, workers locais e auto-topup desativados. Ele acrescenta consulta de saldo, mensagens pelo relay Conway quando configurado, transferência de créditos apenas ao endereço do criador e pagamentos x402 somente para `conway.tech`. O TreasuryGate limita cada operação a US$ 0,25, preserva reserva mínima de US$ 10, limita transferências a US$ 1/dia e exige reconciliação de intenções incertas.
+
+Esse perfil não implementa transferência genérica de criptomoedas, publicação em redes sociais ou submissão de propostas em Upwork/Workana. O agente pode preparar rascunhos, mas só deve afirmar que uma ação externa ocorreu quando uma integração oficial configurada retornar sucesso. Não use automação de navegador, cookies ou sessões de marketplace para contornar essa limitação.
+
 Comandos de leitura e diagnóstico:
 
 ```bash

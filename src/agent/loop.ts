@@ -56,6 +56,9 @@ import { InferenceRouter } from "../inference/router.js";
 import { createResearchTools } from "./research-tools.js";
 import {
   RESEARCH_ALLOWED_TOOLS,
+  OPERATOR_ALLOWED_TOOLS,
+  OPERATOR_EXTERNAL_ACTION_TOOLS,
+  operatorDailyActionLimitReached,
   resolveAutonomyLimits,
 } from "../security/autonomy-profile.js";
 import { MemoryRetriever } from "../memory/retrieval.js";
@@ -110,11 +113,13 @@ export async function runAgentLoop(
 
   const autonomy = resolveAutonomyLimits();
   const builtinTools = [...createBuiltinTools(identity.sandboxId), ...createResearchTools()];
-  const installedTools = autonomy.profile === "research" ? [] : loadInstalledTools(db);
+  const installedTools = autonomy.profile === "default" ? loadInstalledTools(db) : [];
   const allTools = [...builtinTools, ...installedTools];
   const tools = autonomy.profile === "research"
     ? allTools.filter((tool) => RESEARCH_ALLOWED_TOOLS.has(tool.name))
-    : allTools.filter((tool) => tool.category !== "research");
+    : autonomy.profile === "operator"
+      ? allTools.filter((tool) => OPERATOR_ALLOWED_TOOLS.has(tool.name))
+      : allTools.filter((tool) => tool.category !== "research");
   const effectiveSpendTracker = spendTracker ?? new SpendTracker(db.raw);
   const effectivePolicyEngine = policyEngine ?? new PolicyEngine(
     db.raw,
@@ -141,7 +146,7 @@ export async function runAgentLoop(
     ...DEFAULT_MODEL_STRATEGY_CONFIG,
     ...(config.modelStrategy ?? {}),
   };
-  if (autonomy.profile === "research") {
+  if (autonomy.profile !== "default") {
     modelStrategyConfig.dailyBudgetCents = autonomy.dailyInferenceBudgetCents;
     modelStrategyConfig.hourlyBudgetCents = autonomy.hourlyInferenceBudgetCents;
     modelStrategyConfig.perCallCeilingCents = autonomy.perCallCeilingCents;
@@ -162,7 +167,7 @@ export async function runAgentLoop(
   let orchestrator: Orchestrator | undefined;
   let workerPool: LocalWorkerPool | undefined;
 
-  if (autonomy.profile !== "research" && hasTable(db.raw, "goals")) {
+  if (autonomy.profile === "default" && hasTable(db.raw, "goals")) {
     try {
       planModeController = new PlanModeController(db.raw);
 
@@ -409,7 +414,9 @@ export async function runAgentLoop(
   // Build wakeup prompt
   const wakeupInput = autonomy.profile === "research"
     ? "Continue the autonomous research mission. Use current public evidence, update the opportunity pipeline, and stop after producing a concrete auditable result for this cycle."
-    : buildWakeupPrompt({ identity, config, financial, db });
+    : autonomy.profile === "operator"
+      ? "Continue the bounded business-operator mission. Research and prepare the next highest-value legitimate action. Use an external or financial tool only when its destination, amount, evidence, and expected value satisfy the enforced policy."
+      : buildWakeupPrompt({ identity, config, financial, db });
 
   // Transition to running
   db.setAgentState("running");
@@ -417,8 +424,8 @@ export async function runAgentLoop(
 
   log(
     config,
-    autonomy.profile === "research"
-      ? `[WAKE UP] ${config.name} is running in bounded research mode.`
+    autonomy.profile !== "default"
+      ? `[WAKE UP] ${config.name} is running in bounded ${autonomy.profile} mode.`
       : `[WAKE UP] ${config.name} is alive. Credits: $${(financial.creditsCents / 100).toFixed(2)}`,
   );
 
@@ -448,7 +455,7 @@ export async function runAgentLoop(
         break;
       }
 
-      if (autonomy.profile === "research") {
+      if (autonomy.profile !== "default") {
         const today = new Date().toISOString().slice(0, 10);
         const dailyTurns = (db.raw.prepare(
           "SELECT COUNT(*) AS count FROM turns WHERE timestamp >= ? AND timestamp < ?",
@@ -676,7 +683,7 @@ export async function runAgentLoop(
       pendingInput = undefined;
 
       // ── Inference Call (via router when available) ──
-      const survivalTier = autonomy.profile === "research"
+      const survivalTier = autonomy.profile !== "default"
         ? "low_compute"
         : getSurvivalTier(financial.creditsCents);
       log(config, `[THINK] Routing inference (tier: ${survivalTier}, model: ${inference.getDefaultModel()})...`);
@@ -740,18 +747,37 @@ export async function runAgentLoop(
 
           log(config, `[TOOL] ${tc.function.name}(${JSON.stringify(args).slice(0, 100)})`);
 
-          const result = await executeTool(
-            tc.function.name,
-            args,
-            tools,
-            toolContext,
-            effectivePolicyEngine,
-            {
+          let result: ToolCallResult;
+          if (autonomy.profile === "operator" && OPERATOR_EXTERNAL_ACTION_TOOLS.has(tc.function.name)) {
+            const persisted = (db.raw.prepare(
+              `SELECT COUNT(*) AS count FROM tool_calls
+               WHERE name IN ('transfer_credits', 'x402_fetch', 'send_message')
+                 AND created_at >= datetime('now', 'start of day')`,
+            ).get() as { count: number }).count;
+            const current = turn.toolCalls.filter((call) => OPERATOR_EXTERNAL_ACTION_TOOLS.has(call.name)).length;
+            if (operatorDailyActionLimitReached(persisted, current, autonomy.maxExternalActionsPerDay)) {
+              result = {
+                id: tc.id,
+                name: tc.function.name,
+                arguments: args,
+                result: "",
+                durationMs: 0,
+                error: `OPERATOR_DAILY_ACTION_LIMIT: ${persisted + current}/${autonomy.maxExternalActionsPerDay} external actions already attempted today`,
+              };
+            } else {
+              result = await executeTool(tc.function.name, args, tools, toolContext, effectivePolicyEngine, {
+                inputSource: currentInputSource,
+                turnToolCallCount: turn.toolCalls.filter(t => t.name === "transfer_credits").length,
+                sessionSpend: effectiveSpendTracker,
+              });
+            }
+          } else {
+            result = await executeTool(tc.function.name, args, tools, toolContext, effectivePolicyEngine, {
               inputSource: currentInputSource,
               turnToolCallCount: turn.toolCalls.filter(t => t.name === "transfer_credits").length,
               sessionSpend: effectiveSpendTracker,
-            },
-          );
+            });
+          }
 
           // Override the ID to match the inference call's ID
           result.id = tc.id;
@@ -779,7 +805,7 @@ export async function runAgentLoop(
         }
       });
       onTurnComplete?.(turn);
-      if (autonomy.profile === "research" && autonomy.minTurnIntervalMs > 0) {
+      if (autonomy.profile !== "default" && autonomy.minTurnIntervalMs > 0) {
         db.setKV("autonomy.next_turn_at", String(Date.now() + autonomy.minTurnIntervalMs));
       }
 

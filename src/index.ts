@@ -39,7 +39,7 @@ import { isFinancialExecutionEnabled } from "./security/financial-mode.js";
 import { randomUUID } from "crypto";
 import { keccak256, toHex } from "viem";
 import {
-  applyResearchProfile,
+  applyAutonomyProfile,
   resolveAutonomyLimits,
 } from "./security/autonomy-profile.js";
 
@@ -225,13 +225,13 @@ async function run(): Promise<void> {
     config = await runSetupWizard();
   }
   const autonomy = resolveAutonomyLimits();
-  config = applyResearchProfile(config, autonomy);
+  config = applyAutonomyProfile(config, autonomy);
   if (autonomy.killSwitch) {
     logger.warn("AUTOMATON_KILL_SWITCH=true; refusing to start autonomous execution.");
     return;
   }
-  if (autonomy.profile === "research" && !(process.env.OPENAI_API_KEY || config.openaiApiKey)) {
-    throw new Error("Research autonomy requires OPENAI_API_KEY; Conway fallback is disabled");
+  if (autonomy.profile !== "default" && !(process.env.OPENAI_API_KEY || config.openaiApiKey)) {
+    throw new Error("Bounded autonomy requires OPENAI_API_KEY; Conway fallback is disabled");
   }
   logger.info(`[${new Date().toISOString()}] Autonomy profile: ${autonomy.profile}`);
 
@@ -239,14 +239,14 @@ async function run(): Promise<void> {
   const { account, chainIdentity, chainType: walletChainType } = await getWallet();
   const resolvedChainType = config.chainType || walletChainType || "evm";
   const configuredConwayApiKey = config.conwayApiKey || loadApiKeyFromConfig();
-  if (!configuredConwayApiKey && autonomy.profile !== "research") {
+  if (!configuredConwayApiKey && autonomy.profile === "default") {
     logger.error("No API key found. Run: automaton --provision");
     process.exit(1);
   }
-  // The research profile never calls Conway, provisioning, x402, topup, or
-  // blockchain tools. Keep the client structurally available to the existing
-  // runtime without forcing the operator to provision an unused credential.
-  const apiKey = configuredConwayApiKey || "research-profile-disabled";
+  // Bounded profiles skip Conway provisioning and registration. Keep the client
+  // structurally available; operator tools fail closed when a required Conway
+  // credential is absent, while x402 can still use the local treasury gate.
+  const apiKey = configuredConwayApiKey || "bounded-profile-disabled";
 
   // Initialize database
   const dbPath = resolvePath(config.dbPath);
@@ -294,7 +294,7 @@ async function run(): Promise<void> {
 
   // Register automaton identity (one-time, immutable)
   const registrationState = db.getIdentity("conwayRegistrationStatus");
-  if (autonomy.profile !== "research" && registrationState !== "registered") {
+  if (autonomy.profile === "default" && registrationState !== "registered") {
     try {
       const genesisPromptHash = config.genesisPrompt
         ? keccak256(toHex(config.genesisPrompt))
@@ -325,7 +325,7 @@ async function run(): Promise<void> {
   }
 
   // Resolve Ollama base URL: env var takes precedence over config
-  const ollamaBaseUrl = autonomy.profile === "research"
+  const ollamaBaseUrl = autonomy.profile !== "default"
     ? undefined
     : process.env.OLLAMA_BASE_URL || config.ollamaBaseUrl;
 
@@ -385,7 +385,7 @@ async function run(): Promise<void> {
   }
 
   // Initialize state repo (git)
-  if (autonomy.profile !== "research") try {
+  if (autonomy.profile === "default") try {
     await initStateRepo(conway);
     logger.info(`[${new Date().toISOString()}] State repo initialized.`);
   } catch (err: any) {
@@ -394,7 +394,7 @@ async function run(): Promise<void> {
 
   // Bootstrap topup: buy minimum credits ($5) from USDC so the agent can start.
   // The agent decides larger topups itself via the topup_credits tool.
-  if (autonomy.profile !== "research") try {
+  if (autonomy.profile === "default") try {
     let bootstrapTimer: ReturnType<typeof setTimeout>;
     const bootstrapTimeout = new Promise<null>((_, reject) => {
       bootstrapTimer = setTimeout(() => reject(new Error("bootstrap topup timed out")), 15_000);
@@ -444,11 +444,11 @@ async function run(): Promise<void> {
     },
   });
 
-  if (autonomy.profile !== "research") {
+  if (autonomy.profile === "default") {
     heartbeat.start();
     logger.info(`[${new Date().toISOString()}] Heartbeat daemon started.`);
   } else {
-    logger.info(`[${new Date().toISOString()}] Research profile: heartbeat side effects disabled.`);
+    logger.info(`[${new Date().toISOString()}] Bounded profile: heartbeat side effects disabled.`);
   }
 
   // Handle graceful shutdown
@@ -470,7 +470,7 @@ async function run(): Promise<void> {
   while (true) {
     try {
       // Reload skills (may have changed since last loop)
-      if (autonomy.profile !== "research") {
+      if (autonomy.profile === "default") {
         try {
           skills = loadSkills(skillsDir, db);
         } catch (error) {
